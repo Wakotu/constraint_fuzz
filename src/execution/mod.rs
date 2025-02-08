@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod expe;
 pub mod logger;
 pub mod pch;
 pub mod sanitize;
@@ -312,6 +313,7 @@ impl Executor {
             match child.try_wait() {
                 Ok(Some(_status)) => {
                     let err_msg = std::fs::read_to_string(log_file)?;
+                    // exit along with fuzzer exited
                     eyre::bail!("cost time: {cost_time} \n{err_msg}")
                 }
                 Ok(None) => {
