@@ -28,28 +28,35 @@ impl Deopt {
         create_dir_if_nonexist(&harn_expe_dir)?;
         Ok(harn_expe_dir)
     }
+
+    pub fn get_expe_fuzzer_path(&self, program_path: &Path) -> Result<PathBuf> {
+        let harn_expe_dir = self.get_harn_expe_dir()?;
+        let binary_out: PathBuf = [harn_expe_dir, program_path.with_extension("out")]
+            .iter()
+            .collect();
+        Ok(binary_out)
+    }
 }
 
 impl Executor {
-    pub fn build_expe_fuzzer(&self, program_path: &Path) -> Result<()> {
+    pub fn build_expe_fuzzer(&self, program_path: &Path) -> Result<PathBuf> {
         let time_logger = TimeUsage::new(get_file_dirname(program_path));
         let mut transformer = Transformer::new(program_path, &self.deopt)?;
         transformer.add_fd_sanitizer()?;
         transformer.preprocess()?;
 
-        let mut binary_out = PathBuf::from(program_path);
-        binary_out.set_extension("out");
+        let binary_out = self.deopt.get_expe_fuzzer_path(program_path)?;
 
         self.deopt
             .copy_library_init_file(&get_file_dirname(program_path))?;
 
         self.compile(vec![program_path], &binary_out, super::Compile::FUZZER)?;
         time_logger.log("build fuzzer")?;
-        Ok(())
+        Ok(binary_out)
     }
 
     pub fn run_expe(&self, program_path: &Path) -> Result<()> {
-        self.build_expe_fuzzer(program_path)?;
+        let fuzzer_path = self.build_expe_fuzzer(program_path)?;
 
         Ok(())
     }
