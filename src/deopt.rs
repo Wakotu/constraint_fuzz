@@ -654,7 +654,15 @@ impl Deopt {
 pub mod utils {
     use std::collections::HashSet;
 
+    use chrono::Utc;
+
     use super::*;
+
+    // time related
+    pub fn get_formatted_time() -> String {
+        let now = Utc::now();
+        now.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
 
     /// create the directory if it does not exist
     pub fn create_dir_if_nonexist(path: &Path) -> Result<()> {
