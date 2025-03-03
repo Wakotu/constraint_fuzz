@@ -84,9 +84,7 @@ RUN pipx install wllvm
 # build llvm and clang dependency
 RUN wget https://apt.llvm.org/llvm.sh \
     && chmod +x llvm.sh \
-    && ./llvm.sh 18 \
-    && ln -s /usr/bin/clang-18 /usr/bin/clang \
-    && ln -s /usr/bin/clang++-18 /usr/bin/clang++
+    && ./llvm.sh 18 
 
 
 ENV RUSTUP_DIST_SERVER="https://rsproxy.cn" \ 
@@ -106,6 +104,9 @@ index = "https://rsproxy.cn/crates.io-index"
 [net]
 git-fetch-with-cli = true
 EOF
+
+# install library dependencies
+RUN apt install -y yasm
 
 RUN mkdir -p /prompt_fuzz
 ADD ./data/ /prompt_fuzz/data
