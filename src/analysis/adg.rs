@@ -50,7 +50,7 @@ use crate::{
     program::gadget::{get_func_gadget, is_library_api},
 };
 use clang_ast::Id;
-use eyre::Result;
+use color_eyre::eyre::Result;
 use petgraph::{
     dot::{Config, Dot},
     graph::{EdgeIndex, NodeIndex},

@@ -3,7 +3,7 @@ use crate::config::get_library_name;
 use crate::program::Program;
 use crate::request::format_server_url;
 use crate::{config, Deopt};
-use eyre::Result;
+use color_eyre::eyre::Result;
 use once_cell::sync::OnceCell;
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};

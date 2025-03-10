@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use eyre::Result;
+use color_eyre::eyre::Result;
 use prompt_fuzz::{
     deopt::{Deopt, self},
     program::Program, execution::Executor,

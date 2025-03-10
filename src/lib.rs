@@ -12,7 +12,7 @@ pub mod request;
 use async_openai::error::OpenAIError;
 use config::get_library_name;
 use deopt::Deopt;
-use eyre::Result;
+use color_eyre::eyre::Result;
 use flexi_logger::{opt_format, FileSpec, Naming};
 use once_cell::sync::OnceCell;
 

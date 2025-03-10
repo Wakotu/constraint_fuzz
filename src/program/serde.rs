@@ -2,7 +2,7 @@ use core::str::FromStr;
 use std::path::PathBuf;
 
 use crate::request::prompt::combination_to_str;
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 use super::{
     gadget::{get_func_gadget, FuncGadget},

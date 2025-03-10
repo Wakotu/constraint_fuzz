@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 use crate::deopt::Deopt;
 

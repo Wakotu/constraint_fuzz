@@ -654,13 +654,13 @@ impl Deopt {
 pub mod utils {
     use std::collections::HashSet;
 
-    use chrono::Utc;
+    use chrono::Local;
 
     use super::*;
 
     // time related
     pub fn get_formatted_time() -> String {
-        let now = Utc::now();
+        let now = Local::now();
         now.format("%Y-%m-%d %H:%M:%S").to_string()
     }
 

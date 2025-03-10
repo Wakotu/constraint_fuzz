@@ -8,7 +8,7 @@ use crate::{
     program::{serde::Serialize, transform::Transformer, Program},
     Deopt,
 };
-use eyre::Result;
+use color_eyre::eyre::Result;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},

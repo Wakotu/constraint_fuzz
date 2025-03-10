@@ -121,7 +121,7 @@ pub mod typed_gadget {
         },
         Deopt,
     };
-    use eyre::Result;
+    use color_eyre::eyre::Result;
 
     /// get the source code definition of this type name.
     pub fn get_type_definition(ty: &str, visited: &mut HashSet<String>) -> Option<String> {

@@ -1,4 +1,4 @@
-use eyre::Result;
+use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -641,7 +641,8 @@ pub mod utils {
     /// parse line coverage of fuzzer (not library) from lcov data
     pub fn parse_fuzzer_lcov_data(lcov: &str, file: &Path) -> Result<Vec<CovLine>> {
         let mut de = crate::program::serde::Deserializer::from_input(lcov);
-        de.consume_token_until(file.to_str().unwrap())?;
+        let fpath = file.canonicalize()?;
+        de.consume_token_until(fpath.to_str().unwrap())?;
 
         let mut cov_lines = Vec::new();
         de.eat_token_until("FNH")?;

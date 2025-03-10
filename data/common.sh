@@ -84,14 +84,18 @@ function build_bc() {
   unset CC
   unset CXX
   export LLVM_COMPILER=clang
-  export CC=wllvm
-  export CXX=wllvm++
+  # export CC=wllvm
+  # export CXX=wllvm++
+  export CC=gclang
+  export CXX=gclang++
   export CFLAGS="-g -O0 "
   export CXXFLAGS="-g -O0 "
   build_lib
   cd $WORK
-  extract-bc -b $LIB_STORE_DIR/$STALIB_NAME
-  opt --dot-callgraph $LIB_STORE_DIR/${STALIB_NAME}.bc
+  # extract-bc -b $LIB_STORE_DIR/$STALIB_NAME
+  get-bc -b $LIB_STORE_DIR/$STALIB_NAME
+  # opt --dot-callgraph $LIB_STORE_DIR/${STALIB_NAME}.bc
+  opt --disable-output --passes=dot-callgraph $LIB_STORE_DIR/${STALIB_NAME}.bc
   mv $LIB_STORE_DIR/${STALIB_NAME}.bc.callgraph.dot callgraph.dot
   sed -i '/^[[:space:]]*label="Call graph:/d' callgraph.dot
   unset CC

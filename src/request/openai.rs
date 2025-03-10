@@ -14,7 +14,7 @@ use async_openai::{
     types::{CreateCompletionRequest, CreateCompletionResponse},
     Client,
 };
-use eyre::Result;
+use color_eyre::eyre::Result;
 use once_cell::sync::OnceCell;
 
 use self::openai_billing::{load_openai_usage, log_openai_usage};

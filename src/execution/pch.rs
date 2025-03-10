@@ -20,7 +20,7 @@
 use std::{path::PathBuf, process::Command};
 
 use crate::{program::Program, Deopt};
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 use super::Executor;
 

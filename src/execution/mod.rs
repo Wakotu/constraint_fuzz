@@ -15,7 +15,7 @@ use crate::{
     program::shim::FuzzerShim,
     Deopt,
 };
-use eyre::Result;
+use color_eyre::eyre::Result;
 use regex::Regex;
 use std::ffi::OsString;
 use std::process::ChildStderr;

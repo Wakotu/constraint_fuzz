@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::{self, Instant}};
 
-use eyre::Result;
+use color_eyre::eyre::Result;
 use once_cell::sync::OnceCell;
 use regex::{Captures, Regex};
 

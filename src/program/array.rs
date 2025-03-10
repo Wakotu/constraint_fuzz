@@ -1,7 +1,7 @@
 use crate::ast::helper::CommomHelper;
 use crate::ast::{Clang, InitListExpr, Node};
 use crate::program::transform::Transformer;
-use eyre::Result;
+use color_eyre::eyre::Result;
 /// Parse the array stmts in AST.
 /// Impl of Transformation (generate and mutate) of array arguments.
 use std::str::FromStr;

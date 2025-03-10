@@ -1,6 +1,6 @@
 use super::*;
 use clang_ast::{BareSourceLocation, SourceLocation, SourceRange};
-use eyre::Result;
+use color_eyre::eyre::Result;
 use std::{
     cmp::min,
     io::{Read, Seek},

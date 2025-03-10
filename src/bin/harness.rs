@@ -1,4 +1,5 @@
-use eyre::Result;
+// use color_eyre::eyre::Result;
+use color_eyre::eyre::Result;
 use prompt_fuzz::execution::{max_cpu_count, Compile};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -27,6 +28,8 @@ pub struct Config {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// run the experiment
+    Expe { program: PathBuf },
     /// check a program whether is correct.
     Check { program: PathBuf },
     /// Recheck the seeds whether are correct.
@@ -137,7 +140,12 @@ pub fn recheck(project: &'static str) -> Result<()> {
     Ok(())
 }
 
-pub fn fuzzer_run(project: &'static str, run_exploit: bool, time_limit: Option<u64>, minimize: Option<bool>) -> Result<()> {
+pub fn fuzzer_run(
+    project: &'static str,
+    run_exploit: bool,
+    time_limit: Option<u64>,
+    minimize: Option<bool>,
+) -> Result<()> {
     let deopt = Deopt::new(project)?;
     let executor = Executor::new(&deopt)?;
     executor.run_libfuzzer(run_exploit, time_limit, minimize)?;
@@ -223,11 +231,7 @@ fn compile_fuzzer(project: &'static str, kind: Compile, exploit: bool) -> Result
                 Compile::Minimize => "fuzzer_evo",
             };
             let fuzzer_binary: PathBuf = [fuzzer_dir.clone(), fuzzer_name.into()].iter().collect();
-            executor.compile_lib_fuzzers(
-                &fuzzer_dir,
-                &fuzzer_binary,
-                kind.clone(),
-            )?;
+            executor.compile_lib_fuzzers(&fuzzer_dir, &fuzzer_binary, kind.clone())?;
             deopt.copy_library_init_file(&fuzzer_dir)?;
         }
     }
@@ -338,23 +342,35 @@ fn sanitize_crash(project: &'static str, exploit: bool) -> Result<()> {
     Ok(())
 }
 
-fn main() -> ExitCode {
+fn run_expe(project: &'static str, program: &Path) -> Result<()> {
+    let deopt = Deopt::new(project)?;
+    let executor = Executor::new(&deopt)?;
+    executor.run_expe(program)?;
+    Ok(())
+}
+
+fn main() -> Result<ExitCode> {
+    color_eyre::install()?;
     let config = Config::parse();
     prompt_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
     match &config.command {
+        Commands::Expe { program } => {
+            run_expe(project, program).unwrap();
+            return Ok(ExitCode::SUCCESS);
+        }
         Commands::Check { program } => {
             let res: Option<ProgramError> = check(project, program).unwrap();
             if let Some(err) = res {
                 let dump_err = serde_json::to_string(&err).unwrap();
                 eprintln!("{dump_err}");
-                return ExitCode::from(41);
+                return Ok(ExitCode::from(41));
             }
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         Commands::ReCheck => {
             recheck(project).unwrap();
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         Commands::Transform {
             program,
@@ -364,23 +380,24 @@ fn main() -> ExitCode {
             let res = transform(project, program, *use_cons, corpora.clone());
             if let Err(err) = res {
                 eprintln!("{}", err);
-                return ExitCode::from(42);
+                return Ok(ExitCode::from(42));
             }
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         Commands::FuzzerRun {
             use_cons,
             time_limit,
-            minimize } => {
+            minimize,
+        } => {
             let res = fuzzer_run(project, *use_cons, *time_limit, *minimize);
             if let Err(err) = res {
                 eprintln!("{}", err);
-                return ExitCode::from(43);
+                return Ok(ExitCode::from(43));
             }
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         Commands::Coverage { kind, exploit } => {
-            return collect_cov(project, kind, *exploit);
+            return Ok(collect_cov(project, kind, *exploit));
         }
         Commands::Archive { suffix } => {
             archive(project, suffix).unwrap();
@@ -404,7 +421,9 @@ fn main() -> ExitCode {
             constraint_infer(project).unwrap();
         }
         Commands::SanitizeCrash { exploit } => sanitize_crash(project, *exploit).unwrap(),
-        Commands::Compile { kind, exploit } => compile_fuzzer(project, kind.clone(), *exploit).unwrap(),
+        Commands::Compile { kind, exploit } => {
+            compile_fuzzer(project, kind.clone(), *exploit).unwrap()
+        }
     };
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }

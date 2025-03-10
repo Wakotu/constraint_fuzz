@@ -9,7 +9,7 @@ use crate::analysis::WorkList;
 use crate::ast::loc::{get_bare_loc, get_sr_begin_loc, get_sr_end_loc};
 use crate::ast::{Clang, CommomHelper, Node, VarDecl};
 use crate::program::gadget::get_func_gadget;
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 
 use super::CallExpr;

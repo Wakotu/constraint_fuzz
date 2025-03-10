@@ -40,7 +40,7 @@ use super::{
     WorkList,
 };
 use clang_ast::Id;
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 /// Path-based symbol storage.
 pub type Storage<T> = HashMap<VarName, Symbol<T>>;

@@ -12,7 +12,7 @@ use crate::{
     },
     Deopt, deopt::utils::read_sort_dir,
 };
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 use super::{
     branches::{Branch, BranchState, GlobalBranches},

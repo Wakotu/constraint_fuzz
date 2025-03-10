@@ -6,7 +6,7 @@
 //! The get_include_sys_headers() returns the system header files used in this library.
 
 use crate::{config::get_library_name, deopt::Deopt, execution::Executor};
-use eyre::Result;
+use color_eyre::eyre::Result;
 use once_cell::sync::OnceCell;
 use std::{
     path::Path,

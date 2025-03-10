@@ -1,4 +1,4 @@
-use eyre::Result;
+use color_eyre::eyre::Result;
 use prompt_fuzz::{
     config::{self, get_config},
     fuzzer::Fuzzer,

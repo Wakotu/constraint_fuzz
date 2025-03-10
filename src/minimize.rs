@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{deopt::Deopt, feedback::observer::Observer, program::Program};
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 /// Minimize seed programs by unique branches
 pub fn minimize(deopt: &Deopt) -> Result<()> {

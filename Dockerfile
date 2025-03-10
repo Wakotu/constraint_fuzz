@@ -74,8 +74,13 @@ EOT
 
 RUN apt-get update \
     && apt-get -y install build-essential ninja-build wget curl cmake git pipx unzip patchelf graphviz python3 python3-pip lsb-release software-properties-common gnupg file libssl-dev openssl pkg-config libfontconfig libfontconfig1-dev zip \
-    && apt install -y lsb-release wget software-properties-common gnupg \
+    && apt install -y lsb-release wget software-properties-common gnupg golang-go\
     && apt-get clean 
+
+# add go PATH env var
+ENV PATH=/root/go/bin:$PATH
+
+RUN go install github.com/SRI-CSL/gllvm/cmd/...@latest
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 

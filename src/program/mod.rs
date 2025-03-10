@@ -19,7 +19,7 @@ use crate::feedback::branches::Branch;
 use eyre::Context;
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 static mut EXEC_COUNTER: OnceCell<HashMap<String, u32>> = OnceCell::new();
 

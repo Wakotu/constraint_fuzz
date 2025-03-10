@@ -14,7 +14,7 @@ use crate::{
         self, openai::openai_billing::get_quota_cost, prompt::{load_prompt, Prompt}
     },
 };
-use eyre::Result;
+use color_eyre::eyre::Result;
 
 pub struct Fuzzer {
     pub deopt: Deopt,
