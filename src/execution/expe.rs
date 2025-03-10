@@ -123,6 +123,7 @@ impl Executor {
 
     fn show_lib_cov_from_profdata(&self, profdata: &Path) -> Result<()> {
         let cov_lib = get_cov_lib_path(&self.deopt, true);
+        log::debug!("lib during llvm-cov invocation: {cov_lib:?}");
         let output = Command::new("llvm-cov")
             .arg("show")
             .arg(cov_lib)

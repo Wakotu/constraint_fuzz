@@ -35,7 +35,7 @@ use std::{
 use threadpool::ThreadPool;
 use wait_timeout::ChildExt;
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum Compile {
     SANITIZE,
     FUZZER,
@@ -93,6 +93,7 @@ impl Executor {
     /// compile programs into binary.
     pub fn compile(&self, programs: Vec<&Path>, out: &Path, kind: Compile) -> Result<()> {
         let (cflags, lib) = self.get_compile_flags(kind);
+        log::debug!("compile kind: {kind:?}, cflags: {cflags:?}, lib: {lib:?}");
 
         let mut cmd = Command::new("clang++");
         for program in &programs {

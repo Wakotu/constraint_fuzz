@@ -1,6 +1,7 @@
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;
 use prompt_fuzz::execution::{max_cpu_count, Compile};
+use prompt_fuzz::init_logger;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -351,6 +352,7 @@ fn run_expe(project: &'static str, program: &Path) -> Result<()> {
 
 fn main() -> Result<ExitCode> {
     color_eyre::install()?;
+    init_logger()?;
     let config = Config::parse();
     prompt_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
