@@ -1,5 +1,5 @@
 /target
-*log
+*.log
 /output
 /src/extern/__pycache__
 .vscode
