@@ -111,7 +111,7 @@ git-fetch-with-cli = true
 EOF
 
 # install library dependencies
-RUN apt install -y yasm
+RUN apt install -y yasm vim tree
 
 RUN mkdir -p /prompt_fuzz
 ADD ./data/ /prompt_fuzz/data
