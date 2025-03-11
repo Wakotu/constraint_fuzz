@@ -169,6 +169,7 @@ impl Executor {
             .stderr(stderr)
             .spawn()
             .expect("unable to spawn the fuzzer");
+        log::debug!("Child spawned: {child:?}");
         child
     }
 

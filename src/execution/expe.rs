@@ -10,13 +10,9 @@ use crate::{
         create_dir_if_nonexist, get_cov_lib_path, get_file_dirname, get_formatted_time,
     },
     execution::Compile,
-    program::transform::Transformer,
 };
 
-use super::{
-    logger::{ProgramError, TimeUsage},
-    Executor,
-};
+use super::{logger::TimeUsage, Executor};
 use crate::deopt::Deopt;
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;

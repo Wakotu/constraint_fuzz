@@ -74,13 +74,14 @@ function build_oss_fuzz() {
   fuzzer_src_name=av1_dec_fuzzer
   fuzzer_name=${fuzzer_src_name}
 
+  echo "DEBUG:build_oss_fuzz: LIB_STORE DIR = ${LIB_STORE_DIR} OUT = ${OUT}"
   $CXX $CXXFLAGS -std=c++11 \
     -I$SRC/${PROJECT_NAME} \
     -I${LIB_STORE_DIR} \
     -Wl,--start-group \
     $LIB_FUZZING_ENGINE \
     $SRC/${PROJECT_NAME}/examples/${fuzzer_src_name}.cc -o $OUT/${fuzzer_name} \
-    ${LIB_STORE_DIR}/libaom_static.a -Wl,--end-group
+    ${LIB_STORE_DIR}/libaom.a -Wl,--end-group
 }
 
 function copy_include() {

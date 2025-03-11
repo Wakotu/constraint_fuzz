@@ -10,9 +10,9 @@ pub mod mutation;
 pub mod program;
 pub mod request;
 use async_openai::error::OpenAIError;
+use color_eyre::eyre::Result;
 use config::get_library_name;
 use deopt::Deopt;
-use color_eyre::eyre::Result;
 use flexi_logger::{opt_format, FileSpec, Naming};
 use once_cell::sync::OnceCell;
 
@@ -39,9 +39,7 @@ pub fn init_logger() -> Result<()> {
 }
 
 pub fn init_debug_logger() -> Result<()> {
-    flexi_logger::Logger::try_with_env_or_str("debug")?
-        .log_to_stdout()
-        .start()?;
+    flexi_logger::Logger::try_with_env_or_str("debug")?.start()?;
     Ok(())
 }
 
