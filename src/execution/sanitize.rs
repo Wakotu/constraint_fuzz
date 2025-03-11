@@ -95,7 +95,7 @@ impl Executor {
 
         let res = self.execute_fuzzer(
             &binary_out,
-            vec![&corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
+            &[&corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
         );
         time_logger.log("fuzz")?;
         if let Err(err) = res {
@@ -118,7 +118,7 @@ impl Executor {
         let coverage = self.collect_code_coverage(
             Some(program_path),
             &fuzzer_binary,
-            vec![&corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
+            &[&corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
         )?;
 
         // Sanitize the fuzzer by its reached lines

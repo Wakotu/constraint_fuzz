@@ -68,7 +68,7 @@ impl Deopt {
 }
 
 impl Executor {
-    pub fn build_expe_fuzzer(&self, program_path: &Path, work_dir: &Path) -> Result<PathBuf> {
+    pub fn build_expe_fuzzer(&self, program_path: &Path, work_dir: &Path) -> Result<()> {
         log::trace!("build expe fuzzer: {program_path:?}");
 
         let time_logger = TimeUsage::new(work_dir.to_owned());
@@ -84,17 +84,15 @@ impl Executor {
 
         self.compile(vec![program_path], &binary_out, super::Compile::FUZZER)?;
         time_logger.log("expe build")?;
-        Ok(binary_out)
+        Ok(())
     }
 
-    pub fn run_expe_fuzzer(&self, fuzzer: &Path, work_dir: &Path, corpus_dir: &Path) -> Result<()> {
+    pub fn run_expe_fuzzer(&self, work_dir: &Path, corpus_dirs: &[&Path]) -> Result<()> {
+        let fuzzer = self.deopt.get_expe_fuzzer_path(work_dir)?;
         log::trace!("run expe fuzzer: {fuzzer:?}");
         let time_logger = TimeUsage::new(work_dir.to_owned());
 
-        let res = self.execute_fuzzer(
-            fuzzer,
-            vec![corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
-        );
+        let res = self.execute_fuzzer(&fuzzer, corpus_dirs);
         time_logger.log("expe fuzz")?;
         if let Err(err) = res {
             log::error!(
@@ -106,7 +104,7 @@ impl Executor {
         Ok(())
     }
 
-    fn get_cov_profdata(&self, cov_bin: &Path, corpus_dirs: Vec<&Path>) -> Result<PathBuf> {
+    fn get_cov_profdata(&self, cov_bin: &Path, corpus_dirs: &[&Path]) -> Result<PathBuf> {
         let work_dir = get_file_dirname(cov_bin);
         let profdata: PathBuf = crate::deopt::Deopt::get_coverage_file_by_dir(&work_dir);
         if profdata.is_file() {
@@ -143,7 +141,7 @@ impl Executor {
         &self,
         program_path: &Path,
         work_dir: &Path,
-        corpus_dir: &Path,
+        corpus_dirs: &[&Path],
     ) -> Result<()> {
         log::trace!("expe cov build: {program_path:?}");
         let time_logger = TimeUsage::new(work_dir.to_owned());
@@ -152,10 +150,7 @@ impl Executor {
         let cov_fuzzer = self.deopt.get_expe_cov_fuzzer_path(work_dir)?;
         self.compile(vec![program_path], &cov_fuzzer, Compile::COVERAGE)?;
 
-        let profdata = self.get_cov_profdata(
-            &cov_fuzzer,
-            vec![corpus_dir, &self.deopt.get_library_shared_corpus_dir()?],
-        )?;
+        let profdata = self.get_cov_profdata(&cov_fuzzer, corpus_dirs)?;
 
         self.show_lib_cov_from_profdata(&profdata)?;
 
@@ -175,11 +170,14 @@ impl Executor {
 
     pub fn run_expe(&self, program_path: &Path) -> Result<()> {
         let work_dir = self.deopt.get_expe_work_dir(program_path)?;
-        let corpus_dir = self.deopt.get_expe_corpus_dir(&work_dir)?;
+        let expe_corpus = self.deopt.get_expe_corpus_dir(&work_dir)?;
+        let lib_corpus = self.deopt.get_library_build_corpus_dir()?;
+        let shared_corpus = self.deopt.get_library_shared_corpus_dir()?;
+        let corpus_list: [&Path; 3] = [&expe_corpus, &lib_corpus, &shared_corpus];
 
-        let fuzzer_path = self.build_expe_fuzzer(program_path, &work_dir)?;
-        self.run_expe_fuzzer(&fuzzer_path, &work_dir, &corpus_dir)?;
-        self.expe_cov_collect(program_path, &work_dir, &corpus_dir)?;
+        self.build_expe_fuzzer(program_path, &work_dir)?;
+        self.run_expe_fuzzer(&work_dir, &corpus_list)?;
+        self.expe_cov_collect(program_path, &work_dir, &corpus_list)?;
         Ok(())
     }
 }

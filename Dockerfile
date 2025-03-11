@@ -113,10 +113,6 @@ EOF
 # install library dependencies
 RUN apt install -y yasm vim tree
 
-RUN mkdir -p /prompt_fuzz
-ADD ./data/ /prompt_fuzz/data
-ADD ./src/ /prompt_fuzz/src
-ADD ./testsuites /prompt_fuzz/testsuites
-ADD Cargo.lock Cargo.toml /prompt_fuzz/
-ADD ban_all.txt /prompt_fuzz/ban_all.txt
-WORKDIR /prompt_fuzz
+RUN mkdir -p /struct_fuzz
+WORKDIR /struct_fuzz
+COPY . .

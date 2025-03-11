@@ -11,7 +11,6 @@ use crate::ast::{Clang, CommomHelper, Node, VarDecl};
 use crate::program::gadget::get_func_gadget;
 use color_eyre::eyre::Result;
 
-
 use super::CallExpr;
 
 pub struct Visitor {
@@ -403,6 +402,16 @@ impl Visitor {
 pub mod utils {
 
     use super::*;
+    use color_eyre::eyre::Result;
+    use std::process::Command;
+
+    pub fn show_cmd_args(cmd: &Command) {
+        let mut exec_args = vec![cmd.get_program().to_string_lossy().to_string()];
+        for arg in cmd.get_args() {
+            exec_args.push(arg.to_string_lossy().to_string());
+        }
+        log::debug!("spawn args: {exec_args:?}");
+    }
 
     /// Whether this variable is a fuzzable variable:
     /// 1. has init
@@ -503,30 +512,14 @@ pub mod utils {
 
     fn get_call_arg_node_type(arg: &Node) -> String {
         match &arg.kind {
-            Clang::ImplicitCastExpr(ic) => {
-                ic.r#type.get_type_name()
-            }
-            Clang::CStyleCastExpr(ce) => {
-                ce.r#type.get_type_name()
-            }
-            Clang::IntegerLiteral(il) => {
-                il.r#type.get_type_name()
-            }
-            Clang::StringLiteral(sl) => {
-                sl.r#type.get_type_name()
-            }
-            Clang::CharacterLiteral(cl) => {
-                cl.r#type.get_type_name()
-            }
-            Clang::InitListExpr(ile) => {
-                ile.r#type.get_type_name()
-            }
-            Clang::UnaryExprOrTypeTraitExpr(_) => {
-                String::from("size_t")
-            }
-            Clang::DeclRefExpr(dre) => {
-                dre.get_type_name()
-            }
+            Clang::ImplicitCastExpr(ic) => ic.r#type.get_type_name(),
+            Clang::CStyleCastExpr(ce) => ce.r#type.get_type_name(),
+            Clang::IntegerLiteral(il) => il.r#type.get_type_name(),
+            Clang::StringLiteral(sl) => sl.r#type.get_type_name(),
+            Clang::CharacterLiteral(cl) => cl.r#type.get_type_name(),
+            Clang::InitListExpr(ile) => ile.r#type.get_type_name(),
+            Clang::UnaryExprOrTypeTraitExpr(_) => String::from("size_t"),
+            Clang::DeclRefExpr(dre) => dre.get_type_name(),
             Clang::UnaryOperator(ue) => {
                 if ue.is_minus() {
                     let inner = ue.get_inner(arg);

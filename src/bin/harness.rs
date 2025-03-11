@@ -1,8 +1,10 @@
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;
+use prompt_fuzz::config::check_data_dir;
 use prompt_fuzz::execution::{max_cpu_count, Compile};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+use std::sync::OnceLock;
 
 use chrono::prelude::*;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -349,9 +351,15 @@ fn run_expe(project: &'static str, program: &Path) -> Result<()> {
     Ok(())
 }
 
+fn get_config() -> &'static Config {
+    static CONFIG: OnceLock<Config> = OnceLock::new();
+    CONFIG.get_or_init(Config::parse)
+}
+
 fn main() -> Result<ExitCode> {
     color_eyre::install()?;
-    let config = Config::parse();
+    let config = get_config();
+    check_data_dir(&config.project)?;
     prompt_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
     match &config.command {

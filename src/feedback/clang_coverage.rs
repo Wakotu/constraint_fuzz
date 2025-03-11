@@ -506,7 +506,7 @@ impl Executor {
 
         // run fuzzer with cov on each corpus file.
         let profdata: PathBuf = crate::deopt::Deopt::get_coverage_file_by_dir(fuzzer_dir);
-        self.execute_cov_fuzzer_pool(&fuzzer_binary, vec![&minimized_corpus], &profdata)?;
+        self.execute_cov_fuzzer_pool(&fuzzer_binary, &[&minimized_corpus], &profdata)?;
         Ok(())
     }
 

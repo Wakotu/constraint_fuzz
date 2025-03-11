@@ -52,7 +52,7 @@ impl Deopt {
         program
     }
 
-    pub fn select_seed_exclude<'a>(&'a mut self, seed: &Program) -> &'a Program {
+    pub fn select_seed_exclude(&mut self, seed: &Program) -> &Program {
         if self.seed_queue.len() == 1 {
             self.seed_queue[0].increase_visited();
             let program = &self.seed_queue[0];
@@ -305,6 +305,19 @@ impl Deopt {
             .iter()
             .collect();
         Ok(corpus_dir)
+    }
+
+    pub fn get_library_work_build_dir(&self) -> Result<PathBuf> {
+        let work_build_dir = self.get_library_build_dir()?.join("work").join("build");
+        Ok(work_build_dir)
+    }
+
+    pub fn get_library_src_dir(&self) -> Result<PathBuf> {
+        let src_dir = self
+            .get_library_build_dir()?
+            .join("src")
+            .join(self.project_name);
+        Ok(src_dir)
     }
 
     pub fn get_library_landmark_corpus(&self) -> Option<String> {

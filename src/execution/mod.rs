@@ -5,6 +5,7 @@ pub mod pch;
 pub mod sanitize;
 
 use self::logger::ProgramError;
+use crate::ast::utils::show_cmd_args;
 use crate::config::{get_config, get_minimize_compile_flag};
 use crate::program::libfuzzer::respawn_libfuzzer_process;
 use crate::program::transform::Transformer;
@@ -53,8 +54,15 @@ pub struct Executor {
 impl Executor {
     pub fn new(deopt: &Deopt) -> Result<Self> {
         let include_path = &deopt.get_library_build_header_path()?;
+        let work_build_dir = &deopt.get_library_work_build_dir()?;
+        let src_dir = &deopt.get_library_src_dir()?;
 
-        let header_cmd = "-I".to_owned() + include_path.to_str().unwrap();
+        let header_cmd = format!(
+            "-I{} -I{} -I{}",
+            include_path.to_str().unwrap(),
+            work_build_dir.to_str().unwrap(),
+            src_dir.to_str().unwrap(),
+        );
         check_clang()?;
         Ok(Self {
             header_cmd,
@@ -93,7 +101,6 @@ impl Executor {
     /// compile programs into binary.
     pub fn compile(&self, programs: Vec<&Path>, out: &Path, kind: Compile) -> Result<()> {
         let (cflags, lib) = self.get_compile_flags(kind);
-        log::debug!("compile kind: {kind:?}, cflags: {cflags:?}, lib: {lib:?}");
 
         let mut cmd = Command::new("clang++");
         for program in &programs {
@@ -106,13 +113,16 @@ impl Executor {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .args(cflags.as_slice())
-            .arg(&self.header_cmd)
+            .args(self.header_cmd.split_whitespace())
             .arg(include_fdp)
             .arg("-g")
             .arg("-o")
             .arg(out)
             .arg(lib);
         self.deopt.add_extra_c_flags(cmd)?;
+
+        log::debug!("compile kind: {kind:?}");
+        show_cmd_args(cmd);
 
         let output = cmd
             .output()
@@ -158,7 +168,7 @@ impl Executor {
             crate::config::EXECUTION_TIMEOUT
         };
 
-        let child = exec
+        let exec = exec
             .current_dir(current_dir)
             .env("ASAN_OPTIONS", asan_options)
             .arg(rss_limit)
@@ -166,11 +176,12 @@ impl Executor {
             .arg("-close_fd_mask=3")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(stderr)
-            .spawn()
-            .expect("unable to spawn the fuzzer");
-        log::debug!("Child spawned: {child:?}");
-        child
+            .stderr(stderr);
+
+        // echoes args
+        show_cmd_args(exec);
+
+        exec.spawn().expect("unable to spawn the fuzzer")
     }
 
     pub fn execute<S: AsRef<OsStr> + Debug>(
@@ -264,7 +275,7 @@ impl Executor {
         None
     }
 
-    pub fn execute_fuzzer(&self, fuzzer: &Path, corpus: Vec<&Path>) -> Result<()> {
+    pub fn execute_fuzzer(&self, fuzzer: &Path, corpus: &[&Path]) -> Result<()> {
         // make up corpus for each standalone fuzzer.
         let dict = self.deopt.get_library_build_dict_path()?;
 
@@ -363,7 +374,7 @@ impl Executor {
     pub fn execute_cov_fuzzer_pool(
         &self,
         fuzzer_binary: &Path,
-        corpus_dirs: Vec<&Path>,
+        corpus_dirs: &[&Path],
         profdata: &Path,
     ) -> Result<()> {
         let fuzzer_dir = get_file_dirname(fuzzer_binary);
@@ -416,7 +427,7 @@ impl Executor {
         &self,
         fuzzer_code: Option<&Path>,
         fuzzer_binary: &Path,
-        corpus_dir: Vec<&Path>,
+        corpus_dir: &[&Path],
     ) -> Result<CodeCoverage> {
         let work_dir = get_file_dirname(fuzzer_binary);
         let profdata: PathBuf = crate::deopt::Deopt::get_coverage_file_by_dir(&work_dir);
@@ -732,7 +743,7 @@ impl Executor {
         let profdata: PathBuf = self.deopt.get_seed_coverage_file(seed_id)?;
         self.compile_seed(seed_id)?;
 
-        self.execute_cov_fuzzer_pool(&fuzzer_binary, vec![&corpus_dir], &profdata)?;
+        self.execute_cov_fuzzer_pool(&fuzzer_binary, &[&corpus_dir], &profdata)?;
         Ok(())
     }
 }

@@ -1,0 +1,5 @@
+.git/
+output/
+docker_build.sh
+./Dockerfile
+target/

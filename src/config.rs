@@ -2,6 +2,7 @@ use std::ptr::{addr_of, addr_of_mut};
 
 use once_cell::sync::OnceCell;
 use strum::Display;
+use color_eyre::eyre::Result;
 
 // AI Server configure options
 pub const LISTEN_HOST: &str = "127.0.0.1";
@@ -132,7 +133,21 @@ pub fn get_minimize_compile_flag() -> &'static str {
         minimize_flag
     })
 }
-pub fn parse_config() -> eyre::Result<()> {
+
+pub fn check_data_dir(project: &'static str) -> Result<()> {
+    let deopt = Deopt::new(project)?;
+    let data = deopt.get_library_data_dir()?;
+    if !data.exists() {
+        eyre::bail!("Cannot find the entry {} in `data` dir, please prepare it in anvance.", deopt.config.project_name);
+    }
+    let lib = deopt.get_library_build_lib_path()?;
+    if !lib.exists(){
+        eyre::bail!("Cannot find the build library {} in `output/build` dir, please build it by build.sh in anvance.", deopt.config.project_name);
+    }
+    Ok(())
+}
+
+pub fn parse_config() -> Result<()> {
     let config = Config::parse();
     unsafe {CONFIG_INSTANCE = Some(config);}
     let deopt = Deopt::new(get_library_name())?;
@@ -149,7 +164,7 @@ pub fn parse_config() -> eyre::Result<()> {
 
 use clap::{Parser, ValueEnum};
 
-use crate::Deopt;
+use crate::{deopt, Deopt};
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author="Anonymous", name = "LLMFuzzer", version, about="A LLM based Fuzer", long_about = None)]
