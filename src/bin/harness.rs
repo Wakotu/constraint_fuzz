@@ -1,6 +1,7 @@
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;
 use prompt_fuzz::config::check_data_dir;
+use prompt_fuzz::execution::expe::CovFormat;
 use prompt_fuzz::execution::{max_cpu_count, Compile};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -31,7 +32,12 @@ pub struct Config {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// run the experiment
-    Expe { program: PathBuf },
+    Expe {
+        /// which format to use in `llvm-cov`
+        #[arg(long, value_enum)]
+        cov_format: CovFormat,
+        program: PathBuf,
+    },
     /// check a program whether is correct.
     Check { program: PathBuf },
     /// Recheck the seeds whether are correct.
@@ -344,10 +350,10 @@ fn sanitize_crash(project: &'static str, exploit: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_expe(project: &'static str, program: &Path) -> Result<()> {
+fn run_expe(project: &'static str, program: &Path, cov_format: &CovFormat) -> Result<()> {
     let deopt = Deopt::new(project)?;
     let executor = Executor::new(&deopt)?;
-    executor.run_expe(program)?;
+    executor.run_expe(program, cov_format)?;
     Ok(())
 }
 
@@ -363,8 +369,11 @@ fn main() -> Result<ExitCode> {
     prompt_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
     match &config.command {
-        Commands::Expe { program } => {
-            run_expe(project, program).unwrap();
+        Commands::Expe {
+            cov_format,
+            program,
+        } => {
+            run_expe(project, program, cov_format).unwrap();
             return Ok(ExitCode::SUCCESS);
         }
         Commands::Check { program } => {

@@ -14,8 +14,16 @@ use crate::{
 
 use super::{logger::TimeUsage, Executor};
 use crate::deopt::Deopt;
+use clap::ValueEnum;
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CovFormat {
+    SHOW,
+    JSON,
+    LCOV,
+}
 
 impl Deopt {
     pub fn get_library_expe_dir(&self) -> Result<PathBuf> {
@@ -142,6 +150,7 @@ impl Executor {
         program_path: &Path,
         work_dir: &Path,
         corpus_dirs: &[&Path],
+        cov_format: &CovFormat,
     ) -> Result<()> {
         log::trace!("expe cov build: {program_path:?}");
         let time_logger = TimeUsage::new(work_dir.to_owned());
@@ -152,7 +161,16 @@ impl Executor {
 
         let profdata = self.get_cov_profdata(&cov_fuzzer, corpus_dirs)?;
 
-        self.show_lib_cov_from_profdata(&profdata)?;
+        match cov_format {
+            CovFormat::SHOW => self.show_lib_cov_from_profdata(&profdata)?,
+            CovFormat::JSON => {
+                let _coverage =
+                    self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
+            }
+            CovFormat::LCOV => {
+                unimplemented!("lcov coverage export to be implemented");
+            }
+        }
 
         // run and report
         // let coverage = self.collect_code_coverage(
@@ -168,7 +186,7 @@ impl Executor {
         Ok(())
     }
 
-    pub fn run_expe(&self, program_path: &Path) -> Result<()> {
+    pub fn run_expe(&self, program_path: &Path, cov_format: &CovFormat) -> Result<()> {
         let work_dir = self.deopt.get_expe_work_dir(program_path)?;
         let expe_corpus = self.deopt.get_expe_corpus_dir(&work_dir)?;
         let lib_corpus = self.deopt.get_library_build_corpus_dir()?;
@@ -177,7 +195,7 @@ impl Executor {
 
         self.build_expe_fuzzer(program_path, &work_dir)?;
         self.run_expe_fuzzer(&work_dir, &corpus_list)?;
-        self.expe_cov_collect(program_path, &work_dir, &corpus_list)?;
+        self.expe_cov_collect(program_path, &work_dir, &corpus_list, cov_format)?;
         Ok(())
     }
 }
