@@ -32,11 +32,18 @@ pub struct CovFunction {
     #[serde(skip_deserializing)]
     pub lines: Vec<CovLine>,
     pub branches: Vec<CovBranch>,
+    pub filenames: Vec<String>,
+    pub regions: Vec<CovRegion>,
     pub count: usize,
     pub name: String,
 }
 
 impl CovFunction {
+    pub fn get_file_path(&self, file_id: usize) -> String {
+        let fpath = &self.filenames[file_id];
+        fpath.to_owned()
+    }
+
     pub fn get_name(&self) -> &str {
         if let Some(seq) = self.name.rfind(':') {
             return &self.name[seq + 1..];
@@ -132,6 +139,9 @@ struct CovData {
     _notcovered: Option<usize>,
     percent: f32,
 }
+
+/// [line_start, col_start, line_end, col_end, exec_count, file_id, expand_file_id, kind]
+pub type CovRegion = [usize; 8];
 
 // [line_start, col_start, line_end, col_end, exec_count, false_count, fileid, expand_file_id, kind]
 pub type CovBranch = [usize; 9];

@@ -5,12 +5,23 @@ use std::collections::{HashMap, HashSet};
 
 use super::clang_coverage::{CodeCoverage, CovBranch};
 
+pub mod constraints;
+
 type BucketType = u32;
 const BUCKET_MASK: BucketType = BucketType::MAX;
 
 /// line_start, col_strat, line_end, col_end, fileid, expand_file_id, kind, True or false branch,
 /// those 8 numbers idenitify an unique branch
 pub type Branch = [usize; 8];
+
+pub fn branch_eval(br: &Branch) -> bool {
+    let val = br[7];
+    if val == 0 {
+        true
+    } else {
+        false
+    }
+}
 
 pub fn parse_branch(clang_branch: &CovBranch) -> (Branch, Branch) {
     let mut branch: Branch = [0; 8];
@@ -21,8 +32,6 @@ pub fn parse_branch(clang_branch: &CovBranch) -> (Branch, Branch) {
     false_branch[7] = 1;
     (true_branch, false_branch)
 }
-
-
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct BranchState {
@@ -171,7 +180,7 @@ impl GlobalBranches {
                 branches.push(false_branch.clear_bucket());
             }
             let func_branches = FuncBranches::new(branches);
-            if self.branches.contains_key(func_name){
+            if self.branches.contains_key(func_name) {
                 continue;
             }
             self.branches.insert(func_name.to_string(), func_branches);
@@ -191,7 +200,10 @@ impl GlobalBranches {
             }
             visited.insert(func_name);
             let func_states = llvm_branches_to_internal(&func.branches);
-            let global_states = self.branches.get(func_name).unwrap_or_else(||panic!("cannot found {func_name} in branch"));
+            let global_states = self
+                .branches
+                .get(func_name)
+                .unwrap_or_else(|| panic!("cannot found {func_name} in branch"));
             let has_new = Self::check_branch_states(global_states, &func_states);
             if !has_new.is_empty() {
                 new_branches.insert(func_name.to_string(), has_new);
@@ -259,7 +271,7 @@ impl GlobalBranches {
         for func_state in self.branches.values() {
             for branch_state in func_state.get_branches() {
                 if branch_state.bucket != BUCKET_MASK {
-                    covered.push(branch_state.branch);                    
+                    covered.push(branch_state.branch);
                 }
             }
         }

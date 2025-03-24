@@ -16,6 +16,7 @@ use super::{logger::TimeUsage, Executor};
 use crate::deopt::Deopt;
 use clap::ValueEnum;
 // use color_eyre::eyre::Result;
+use crate::feedback::branches::constraints::collect_constraints_from_cov;
 use color_eyre::eyre::Result;
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -164,8 +165,10 @@ impl Executor {
         match cov_format {
             CovFormat::SHOW => self.show_lib_cov_from_profdata(&profdata)?,
             CovFormat::JSON => {
-                let _coverage =
+                let cov =
                     self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
+                let cons_list = collect_constraints_from_cov(&cov);
+                log::debug!("Constraints collected: {:?}", cons_list);
             }
             CovFormat::LCOV => {
                 unimplemented!("lcov coverage export to be implemented");

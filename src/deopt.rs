@@ -108,6 +108,17 @@ impl Deopt {
         Ok(*currdir)
     }
 
+    pub fn get_crate_src_dir() -> Result<PathBuf> {
+        let crate_dir = Self::get_crate_dir()?;
+        let src_dir = Path::new(crate_dir).join("src");
+        Ok(src_dir)
+    }
+
+    pub fn get_test_data_dir() -> Result<PathBuf> {
+        let src_dir = Self::get_crate_src_dir()?;
+        Ok(src_dir.join("test_data"))
+    }
+
     /// get the output directory of this crate.
     pub fn get_crate_output_dir() -> Result<PathBuf> {
         let out_dir: PathBuf = [Deopt::get_crate_dir()?, "output"].iter().collect();
