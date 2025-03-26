@@ -18,7 +18,7 @@ use super::{logger::TimeUsage, Executor};
 use crate::deopt::Deopt;
 use clap::ValueEnum;
 // use color_eyre::eyre::Result;
-use crate::feedback::branches::constraints::collect_constraints_from_cov;
+// use crate::feedback::branches::constraints::collect_constraints_from_cov;
 use color_eyre::eyre::Result;
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -183,7 +183,7 @@ impl Executor {
             CovFormat::JSON => {
                 let cov =
                     self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
-                let cons_list = collect_constraints_from_cov(&cov)?;
+                let cons_list = cov.collect_constraints_from_cov()?;
                 self.save_cons_list(&cons_list, work_dir)?;
                 log::debug!("Constraint Collection done");
             }
