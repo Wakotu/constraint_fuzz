@@ -14,13 +14,13 @@ const BUCKET_MASK: BucketType = BucketType::MAX;
 /// those 8 numbers idenitify an unique branch
 pub type Branch = [usize; 8];
 
+pub fn get_branch_fileid(br: &Branch) -> usize {
+    br[4]
+}
+
 pub fn branch_eval(br: &Branch) -> bool {
     let val = br[7];
-    if val == 0 {
-        true
-    } else {
-        false
-    }
+    val == 0
 }
 
 pub fn parse_branch(clang_branch: &CovBranch) -> (Branch, Branch) {

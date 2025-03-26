@@ -39,6 +39,20 @@ pub struct CovFunction {
 }
 
 impl CovFunction {
+    pub fn get_unselected_branch(&self) -> Vec<Branch> {
+        let mut br_list: Vec<Branch> = vec![];
+        for br in self.branches.iter() {
+            if let Some(usbr) = br.get_unselected_branch() {
+                br_list.push(usbr);
+            }
+        }
+        br_list
+    }
+
+    pub fn get_body_region(&self) -> CovRegion {
+        self.regions[0]
+    }
+
     pub fn get_file_path(&self, file_id: usize) -> String {
         let fpath = &self.filenames[file_id];
         fpath.to_owned()
@@ -143,12 +157,17 @@ struct CovData {
 /// [line_start, col_start, line_end, col_end, exec_count, file_id, expand_file_id, kind]
 pub type CovRegion = [usize; 8];
 
+pub fn get_cov_region_fileid(region: &CovRegion) -> usize {
+    region[5]
+}
+
 // [line_start, col_start, line_end, col_end, exec_count, false_count, fileid, expand_file_id, kind]
 pub type CovBranch = [usize; 9];
 pub trait BranchCount {
     fn get_true_count(&self) -> &usize;
     fn get_false_count(&self) -> &usize;
     fn get_covered_branch(&self) -> Vec<Branch>;
+    fn get_unselected_branch(&self) -> Option<Branch>;
 }
 
 impl BranchCount for CovBranch {
@@ -171,6 +190,36 @@ impl BranchCount for CovBranch {
             covered.push(false_branch);
         }
         covered
+    }
+
+    fn get_unselected_branch(&self) -> Option<Branch> {
+        let (tbr, fbr) = parse_branch(self);
+
+        let mut tmiss = false;
+        let mut fmiss = false;
+
+        let mut br: Branch = [0; 8];
+
+        if *self.get_true_count() == 0 {
+            br = tbr;
+            tmiss = true;
+        }
+
+        if *self.get_false_count() == 0 {
+            br = fbr;
+            fmiss = true;
+        }
+
+        if tmiss ^ fmiss {
+            Some(br)
+        } else {
+            None
+        }
+
+        // if tmiss && fmiss {
+        //     log::warn!("2 arms missed branch found: {:?}", self);
+        // }
+        // br_list
     }
 }
 

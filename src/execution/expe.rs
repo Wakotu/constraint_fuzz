@@ -1,6 +1,7 @@
 use core::panic;
 use std::{
-    fs,
+    fs::{self, File},
+    io::BufWriter,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -10,6 +11,7 @@ use crate::{
         create_dir_if_nonexist, get_cov_lib_path, get_file_dirname, get_formatted_time,
     },
     execution::Compile,
+    feedback::branches::constraints::Constraint,
 };
 
 use super::{logger::TimeUsage, Executor};
@@ -73,6 +75,10 @@ impl Deopt {
         let corpus_dir = work_dir.join("corpus");
         create_dir_if_nonexist(&corpus_dir)?;
         Ok(corpus_dir)
+    }
+
+    pub fn get_expe_constraints_path(&self, work_dir: &Path) -> PathBuf {
+        work_dir.join("constraints.json")
     }
 }
 
@@ -146,6 +152,16 @@ impl Executor {
         Ok(())
     }
 
+    fn save_cons_list(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
+        let fpath = self.deopt.get_expe_constraints_path(work_dir);
+        let file = File::create(&fpath)?;
+        let writer = BufWriter::new(file);
+
+        serde_json::to_writer(writer, cons_list)?;
+
+        Ok(())
+    }
+
     pub fn expe_cov_collect(
         &self,
         program_path: &Path,
@@ -167,8 +183,9 @@ impl Executor {
             CovFormat::JSON => {
                 let cov =
                     self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
-                let cons_list = collect_constraints_from_cov(&cov);
-                log::debug!("Constraints collected: {:?}", cons_list);
+                let cons_list = collect_constraints_from_cov(&cov)?;
+                self.save_cons_list(&cons_list, work_dir)?;
+                log::debug!("Constraint Collection done");
             }
             CovFormat::LCOV => {
                 unimplemented!("lcov coverage export to be implemented");
