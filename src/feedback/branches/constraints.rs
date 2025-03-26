@@ -6,7 +6,6 @@ use std::{
 
 use crate::feedback::clang_coverage::{get_cov_region_fileid, CodeCoverage, CovFunction};
 use color_eyre::eyre::Result;
-use colored::Colorize;
 use serde::Serialize;
 use std::fs::File;
 
@@ -86,7 +85,7 @@ pub struct Constraint {
     res: bool,
     fpath: PathBuf,
     range: Range,
-    func_name: String,
+    func_sig: String,
     slice: String,
 }
 
@@ -114,14 +113,14 @@ impl CovFunction {
 
     fn parse_constraint_from_branch(&self, br: &Branch) -> Result<Constraint> {
         let res = branch_eval(br);
-        let (cond_expr, fpath, range, func_name, slice) = self.extract_branch_in_covfunc(br)?;
+        let (cond_expr, fpath, range, func_sig, slice) = self.extract_branch_in_covfunc(br)?;
 
         let cons = Constraint {
             cond_expr,
             res,
             fpath,
             range,
-            func_name,
+            func_sig,
             slice,
         };
         Ok(cons)
@@ -138,8 +137,8 @@ impl CovFunction {
         // get text of specified range in source file
         let expr = range.get_range_text(&fpath)?;
         let slice = self.get_func_text()?;
-        let func_name = self.get_func_sig(&fpath)?;
-        Ok((expr, fpath, range, func_name, slice))
+        let func_sig = self.get_func_sig(&fpath)?;
+        Ok((expr, fpath, range, func_sig, slice))
     }
 
     /// returns modifies offset of reader and returns bytes offset value
@@ -155,7 +154,7 @@ impl CovFunction {
 
         reader.read_line(&mut buf)?;
         let line_m = buf;
-        for (cidx, (pos, ch)) in line_m.char_indices().enumerate() {
+        for (cidx, (pos, _)) in line_m.char_indices().enumerate() {
             let col = cidx + 1;
             if col == *n {
                 ofs += pos;
@@ -203,7 +202,6 @@ impl CovFunction {
 
         let rng = Range::from_slice(&body_reg)?;
         let [sloc, _] = rng.extract_locs()?;
-        // TODO: implement get function signature
         let file = File::open(fpath)?;
         let mut reader = BufReader::new(file);
 
@@ -212,6 +210,7 @@ impl CovFunction {
         let (par1, start_ofs) = Self::get_slice_rev_until(&mut reader, start_ofs, "(")?;
         let (par2, start_ofs) = Self::get_slice_rev_until(&mut reader, start_ofs, " ")?;
         let (par3, _) = Self::get_slice_rev_until(&mut reader, start_ofs, "\n")?;
+        let par1 = par1.trim();
         let par3 = par3.trim();
 
         let sig_str = format!("{}{}{}", par3, par2, par1);
