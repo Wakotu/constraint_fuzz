@@ -27,7 +27,7 @@ struct CovObject {
     totals: CovSummary,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CovFunction {
     #[serde(skip_deserializing)]
     pub lines: Vec<CovLine>,

@@ -302,6 +302,8 @@ impl Executor {
             false,
         );
 
+        log::info!("fuzzer started: {:?}", fuzzer);
+
         let mut cost_time: u64 = 0;
         let mut previous_cov = None;
         let mut should_break = false;
@@ -334,6 +336,7 @@ impl Executor {
                     if should_break {
                         child.kill()?;
                         child.wait()?;
+                        log::info!("fuzzer stopped: {:?}", fuzzer);
                         return Ok(());
                     }
                 }
