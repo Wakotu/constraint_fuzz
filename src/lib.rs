@@ -61,6 +61,12 @@ fn my_format(
     Ok(())
 }
 
+pub fn init_report_utils_for_tests() -> Result<()> {
+    init_debug_logger()?;
+    color_eyre::install()?;
+    Ok(())
+}
+
 pub fn init_debug_logger() -> Result<()> {
     flexi_logger::Logger::try_with_env_or_str("debug")?
         .format(my_format)

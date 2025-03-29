@@ -183,7 +183,7 @@ impl Executor {
             CovFormat::JSON => {
                 let cov =
                     self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
-                let cons_list = cov.collect_constraints_from_cov_pool()?;
+                let cons_list = cov.collect_rev_constraints_from_cov_pool()?;
                 self.save_cons_list(&cons_list, work_dir)?;
                 log::debug!("Constraint Collection done");
             }

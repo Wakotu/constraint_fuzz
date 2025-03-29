@@ -12,6 +12,7 @@ use crate::{
 };
 use color_eyre::eyre::Result;
 use eyre::bail;
+use regex::Regex;
 use serde::Serialize;
 use std::fs::File;
 use threadpool::ThreadPool;
@@ -345,6 +346,14 @@ impl CovFunction {
         Ok((slice, cur_ofs))
     }
 
+    pub fn func_sig_formalize(func_sig: &str) -> Result<String> {
+        let func_sig = func_sig.trim();
+        let re = Regex::new(r"\n\s*")?;
+        let func_sig = re.replace_all(func_sig, " ");
+        let func_sig = func_sig.to_string();
+        Ok(func_sig)
+    }
+
     fn get_func_sig(&self, fpath: &Path) -> Result<String> {
         let body_reg = self.get_body_region();
 
@@ -362,12 +371,14 @@ impl CovFunction {
         let par3 = par3.trim();
 
         let sig_str = format!("{}{}{}", par3, par2, par1);
+        let sig_str = Self::func_sig_formalize(&sig_str)?;
+
         Ok(sig_str)
     }
 }
 
 impl CodeCoverage {
-    pub fn collect_constraints_from_cov_pool(&self) -> Result<Vec<Constraint>> {
+    pub fn collect_rev_constraints_from_cov_pool(&self) -> Result<Vec<Constraint>> {
         let cpu_count = max_cpu_count();
         let pool = ThreadPool::new(cpu_count);
 
@@ -420,20 +431,34 @@ impl CodeCoverage {
 
 #[cfg(test)]
 mod tests {
-    use crate::{deopt::Deopt, init_debug_logger};
+    use crate::{deopt::Deopt, init_report_utils_for_tests};
     use color_eyre::eyre::Result;
 
     use super::*;
 
     #[test]
     fn test_get_range_text() -> Result<()> {
-        init_debug_logger()?;
+        init_report_utils_for_tests()?;
         let range = [16, 7, 16, 11];
         let dir = Deopt::get_test_data_dir()?;
         let fpath = dir.join("add.c");
         let text = range.get_range_text_from_file(&fpath)?;
         log::debug!("text: {}", text);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_func_sig_formalize() -> Result<()> {
+        init_report_utils_for_tests()?;
+        let func_sig = "
+aom_codec_err_t aom_codec_enc_init_ver(aom_codec_ctx_t *ctx,
+                                       aom_codec_iface_t *iface,
+                                       const aom_codec_enc_cfg_t *cfg,
+                                       aom_codec_flags_t flags, int ver)
+";
+        let form_func_sig = CovFunction::func_sig_formalize(func_sig)?;
+        log::debug!("func_sig: {}", form_func_sig);
         Ok(())
     }
 }
