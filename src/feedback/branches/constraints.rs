@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{atomic::AtomicBool, mpsc::channel, Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
 use crate::{
@@ -158,8 +158,56 @@ pub struct Constraint {
     fpath: PathBuf,
     range: Range,
     func_sig: String,
+    /// Function Body as slice
     slice: String,
     macro_mapping: MacMapping,
+}
+
+impl Constraint {
+    fn get_cond_expr_in_fname(&self) -> String {
+        self.cond_expr
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c.is_whitespace() {
+                    c
+                } else {
+                    '%'
+                }
+            })
+            .collect()
+    }
+
+    fn get_macro_map_str(&self) -> String {
+        let mut res = String::new();
+        for (key, val) in self.macro_mapping.iter() {
+            let line = format!("{}: {}\n", key, val);
+            res.push_str(&line);
+        }
+        res
+    }
+
+    pub fn get_show_filename(&self) -> Result<String> {
+        let cons_fname = self.fpath.file_stem().unwrap().to_str().unwrap();
+        let fname = format!("{}_{}.md", cons_fname, self.get_cond_expr_in_fname());
+        // let fname = format!("{}_{}.md", cons_fname, &self.cond_expr);
+        Ok(fname)
+    }
+
+    fn show_section(sec_name: &str, sec_content: &str) -> String {
+        format!("\n### {}\n\n```c\n{}\n```\n", sec_name, sec_content)
+    }
+
+    pub fn get_show_content(&self) -> Result<String> {
+        let expr = Self::show_section("Condition Expression", &self.cond_expr);
+        let res = Self::show_section("Result Value", &self.res.to_string());
+        let func_sig = Self::show_section("Function Signature", &self.func_sig);
+        let func_body = Self::show_section("Function Body", &self.slice);
+        let fpath = Self::show_section("File Location", self.fpath.to_str().unwrap());
+
+        let macro_map = Self::show_section("Macro Exansion", &self.get_macro_map_str());
+        let content = format!("{expr}{res}{macro_map}{func_sig}{func_body}{fpath}");
+        Ok(content)
+    }
 }
 
 impl CovFunction {

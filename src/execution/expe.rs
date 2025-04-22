@@ -80,6 +80,12 @@ impl Deopt {
     pub fn get_expe_constraints_path(&self, work_dir: &Path) -> PathBuf {
         work_dir.join("constraints.json")
     }
+
+    pub fn get_expe_constraints_show_dir(&self, work_dir: &Path) -> Result<PathBuf> {
+        let show_dir = work_dir.join("constraints_show");
+        create_dir_if_nonexist(&show_dir)?;
+        Ok(show_dir)
+    }
 }
 
 impl Executor {
@@ -152,10 +158,26 @@ impl Executor {
         Ok(())
     }
 
+    fn show_each_cons(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
+        let show_dir = self.deopt.get_expe_constraints_show_dir(work_dir)?;
+        for cons in cons_list {
+            let fname = cons.get_show_filename()?;
+            let fpath = show_dir.join(&fname);
+            // log::debug!("cons fpath: {:?}", fpath);
+            let content = cons.get_show_content()?;
+            Deopt::write_wtih_buffer(&fpath, content.as_bytes())?;
+        }
+        Ok(())
+    }
+
     fn save_cons_list(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
         let fpath = self.deopt.get_expe_constraints_path(work_dir);
         let file = File::create(&fpath)?;
+        // let mut writer = BufWriter::new(file);
         let writer = BufWriter::new(file);
+
+        // let toml_str = toml::to_string(&cons_list)?;
+        // writer.write_all(toml_str.as_bytes())?;
 
         serde_json::to_writer(writer, cons_list)?;
 
@@ -185,6 +207,7 @@ impl Executor {
                     self.collect_code_coverage(Some(program_path), &cov_fuzzer, corpus_dirs)?;
                 let cons_list = cov.collect_rev_constraints_from_cov_pool()?;
                 self.save_cons_list(&cons_list, work_dir)?;
+                self.show_each_cons(&cons_list, work_dir)?;
                 log::debug!("Constraint Collection done");
             }
             CovFormat::LCOV => {

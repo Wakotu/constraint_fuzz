@@ -10,6 +10,7 @@ use eyre::{Context, Result};
 use once_cell::sync::OnceCell;
 use std::{
     collections::VecDeque,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -25,6 +26,14 @@ pub struct Deopt {
 }
 
 impl Deopt {
+    pub fn write_wtih_buffer(fpath: &Path, content: &[u8]) -> Result<()> {
+        let file = std::fs::File::create(fpath)?;
+        let mut writer = BufWriter::new(file);
+        writer.write_all(content)?;
+
+        Ok(())
+    }
+
     pub fn delete_seed_from_queue(&mut self, seed: &Program) {
         self.seed_queue.retain(|x| x.id != seed.id)
     }
