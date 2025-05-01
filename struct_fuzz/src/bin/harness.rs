@@ -1,22 +1,22 @@
 // use color_eyre::eyre::Result;
 use color_eyre::eyre::Result;
-use prompt_fuzz::config::check_data_dir;
-use prompt_fuzz::execution::expe::CovFormat;
-use prompt_fuzz::execution::{max_cpu_count, Compile};
+use struct_fuzz::config::check_data_dir;
+use struct_fuzz::execution::expe::CovFormat;
+use struct_fuzz::execution::{max_cpu_count, Compile};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::OnceLock;
 
 use chrono::prelude::*;
 use clap::{Parser, Subcommand, ValueEnum};
-use prompt_fuzz::analysis::adg::ADGBuilder;
-use prompt_fuzz::analysis::cfg::CFGBuilder;
-use prompt_fuzz::deopt::{self, Deopt};
-use prompt_fuzz::execution::{logger::ProgramError, Executor};
-use prompt_fuzz::feedback::observer::Observer;
-use prompt_fuzz::minimize::minimize;
-use prompt_fuzz::program::infer::infer_constraints;
-use prompt_fuzz::program::libfuzzer::{sanitize_crash, LibFuzzer};
+use struct_fuzz::analysis::adg::ADGBuilder;
+use struct_fuzz::analysis::cfg::CFGBuilder;
+use struct_fuzz::deopt::{self, Deopt};
+use struct_fuzz::execution::{logger::ProgramError, Executor};
+use struct_fuzz::feedback::observer::Observer;
+use struct_fuzz::minimize::minimize;
+use struct_fuzz::program::infer::infer_constraints;
+use struct_fuzz::program::libfuzzer::{sanitize_crash, LibFuzzer};
 use strum_macros::Display;
 
 /// Command Parser
@@ -130,7 +130,7 @@ pub fn transform(
     corpora: Option<PathBuf>,
 ) -> Result<()> {
     let deopt = Deopt::new(project)?;
-    prompt_fuzz::program::transform::transform(&deopt, program_path, use_cons, corpora)?;
+    struct_fuzz::program::transform::transform(&deopt, program_path, use_cons, corpora)?;
     Ok(())
 }
 
@@ -366,7 +366,7 @@ fn main() -> Result<ExitCode> {
     color_eyre::install()?;
     let config = get_config();
     check_data_dir(&config.project)?;
-    prompt_fuzz::config::Config::init_test(&config.project);
+    struct_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
     match &config.command {
         Commands::Expe {

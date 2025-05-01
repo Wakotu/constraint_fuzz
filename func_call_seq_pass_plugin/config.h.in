@@ -1,0 +1,7 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// Macros defined by CMake
+@CONFIG_DEFS@
+
+#endif // CONFIG_H

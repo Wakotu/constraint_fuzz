@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
-use prompt_fuzz::{
+use struct_fuzz::{
     deopt::{Deopt, self},
     program::Program, execution::Executor,
 };
@@ -134,7 +134,7 @@ impl<'a> BranchCounter<'a> {
 
 fn collect_accumulation_coverage(deopt: &Deopt, is_rand_bench: bool) -> Result<()> {
     let succ_seed_dir = deopt.get_library_succ_seed_dir()?;
-    let succ_seeds = prompt_fuzz::deopt::utils::read_sort_dir(&succ_seed_dir)?;
+    let succ_seeds = struct_fuzz::deopt::utils::read_sort_dir(&succ_seed_dir)?;
     let mut last_seed_id = 0;
     let mut last_seed_coverage = 0;
     let mut counter = BranchCounter::new(deopt);
@@ -263,7 +263,7 @@ fn coverage(project: &'static str, kind: &ACCKind, is_rand_bench: bool) -> Resul
 
 fn main() -> Result<()> {
     let config = Config::parse();
-    prompt_fuzz::config::Config::init_test(&config.project);
+    struct_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
 
     match &config.command {

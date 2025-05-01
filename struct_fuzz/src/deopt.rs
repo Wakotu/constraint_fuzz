@@ -870,7 +870,10 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
+    use crate::init_report_utils_for_tests;
+
     use super::*;
+    use color_eyre::eyre::Result;
 
     #[test]
     fn test_update_prompt_queue() -> Result<()> {
@@ -894,6 +897,15 @@ mod tests {
         let seed_id_1 = 55;
         let coverage = deopt.get_seed_coverage(seed_id_1)?;
         deopt.update_seed_unique_branches(&coverage);
+        Ok(())
+    }
+
+    #[test]
+    fn test_crate_dir() -> Result<()> {
+        init_report_utils_for_tests()?;
+        let crate_dir = Deopt::get_crate_dir()?;
+        log::info!("crate_dir: {crate_dir}");
+
         Ok(())
     }
 }
