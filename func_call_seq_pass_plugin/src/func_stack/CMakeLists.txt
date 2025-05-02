@@ -4,3 +4,5 @@ file(GLOB CUR_SRC_FILES
 )
 
 add_library(func_stack STATIC "${CUR_SRC_FILES}")
+
+install(TARGETS func_stack DESTINATION lib)

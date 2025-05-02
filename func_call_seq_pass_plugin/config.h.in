@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 // Macros defined by CMake
-@CONFIG_DEFS@
+#define PLUGIN_NAME "@PLUGIN_NAME@"
+#define OUTPUT_ENV_VAR "@OUTPUT_ENV_VAR@"
 
 #endif // CONFIG_H

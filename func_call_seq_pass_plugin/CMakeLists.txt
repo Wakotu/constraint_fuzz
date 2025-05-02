@@ -25,9 +25,8 @@ add_definitions("${LLVM_DEFINITIONS}")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
 set(PLUGIN_NAME "func_seq_pass" CACHE STRING "Plugin name")
-
-set(CONFIG_DEFS "")
-list(APPEND CONFIG_DEFS "#define PLUGIN_NAME \"${PLUGIN_NAME}\"")
+set(OUTPUT_ENV_VAR "FUNC_STACK_OUT" CACHE STRING
+  "func seq output file name")
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
@@ -35,4 +34,4 @@ configure_file(
     @ONLY
 )
 
-add_subdirectory(lib)
+add_subdirectory(src)

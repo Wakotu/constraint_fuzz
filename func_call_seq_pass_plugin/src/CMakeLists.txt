@@ -4,5 +4,7 @@ file(GLOB CUR_SRC_FILES
 
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 
-add_library("${CMAKE_PROJECT_NAME}" SHARED "${CUR_SRC_FILES}")
+add_library("${PLUGIN_NAME}" SHARED "${CUR_SRC_FILES}")
+
+install(TARGETS "${PLUGIN_NAME}" DESTINATION lib)
 add_subdirectory(func_stack)
