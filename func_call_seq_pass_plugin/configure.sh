@@ -8,6 +8,9 @@ build_dir='build'
 
 cmake -S . -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_INSTALL_PREFIX="$(pwd)" \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 # cmake --build "$build_dir"

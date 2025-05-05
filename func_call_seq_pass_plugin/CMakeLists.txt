@@ -2,9 +2,6 @@ cmake_minimum_required(VERSION 3.20)
 
 project(func_seq_pp)
 
-set(CMAKE_CXX_COMPILER "clang++" CACHE STRING "C++ compiler")
-set(CMAKE_C_COMPILER "clang" CACHE STRING "C compiler")
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +21,7 @@ add_definitions("${LLVM_DEFINITIONS}")
 # custom global constants
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
-set(PLUGIN_NAME "func_seq_pass" CACHE STRING "Plugin name")
+set(PLUGIN_NAME "func_stack_pass" CACHE STRING "Plugin name")
 set(OUTPUT_ENV_VAR "FUNC_STACK_OUT" CACHE STRING
   "func seq output file name")
 

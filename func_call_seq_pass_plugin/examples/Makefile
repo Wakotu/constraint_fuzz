@@ -10,8 +10,8 @@ CFLAGS = -fsanitize=address
 all: $(OUT)
 
 $(OUT): $(SRC)
-	$(CC) $(CFLAGS) -fpass-plugin='../lib/libfunc_seq_pass.so' -c $^ -o input.o 
-	$(CXX) $(CFLAGS) input.o -L ../lib -lfunc_stack -o $@
+	$(CC) $(CFLAGS)  -c $^ -o input.o -fpass-plugin=$(HOME)/.local/lib/func_seq_pass/libfunc_seq_pass.so
+	$(CC) $(CFLAGS) input.o -L $(HOME)/.local/lib/func_seq_pass -lfunc_stack -lstdc++ -o $@ 
 
 clean:
 	rm -f $(OUT) *.o

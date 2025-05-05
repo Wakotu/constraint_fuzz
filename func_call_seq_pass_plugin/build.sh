@@ -8,8 +8,9 @@ build_dir='build'
 
 cmake -S . -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DFUNC_SEQ_OUTPUT_PATH='xxx.out' \
-  -DCMAKE_INSTALL_PREFIX="$(pwd)" \
+  -DCMAKE_INSTALL_PREFIX="${HOME}/.local/lib" \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_C_COMPILER=clang \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 cmake --build "$build_dir"

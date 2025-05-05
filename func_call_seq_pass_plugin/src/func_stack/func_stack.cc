@@ -16,6 +16,9 @@ void setup_fp() {
   }
 
   const char *fpath = std::getenv(OUTPUT_ENV_VAR);
+  if (!fpath) {
+    fpath = "func_stack.log";
+  }
   fp = fopen(fpath, "w");
 }
 
@@ -52,6 +55,9 @@ void pop_func() {
 
 void push_func(const char *func_name) {
   std::string func(func_name);
+
+  printf("before push_func: %s\n", func_name);
+
   func_stack.push_back(func);
   LOG_FILE("enter %s\n", func_name);
   print_func_stack_rev();
