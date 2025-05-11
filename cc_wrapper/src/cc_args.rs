@@ -4,6 +4,8 @@ use which;
 
 use colored::Colorize;
 
+use crate::utils::paths::{get_impl_lib_name, get_lib_dir, get_plugin_path};
+
 fn is_path_exe(cmd: &str) -> bool {
     let res = which::which(cmd);
     res.is_ok()
@@ -176,12 +178,7 @@ impl CCArgs {
             return Ok(());
         }
 
-        let home = env::var("HOME")?;
-        let plg_path = Path::new(&home)
-            .join(".local")
-            .join("lib")
-            .join("func_seq_pass")
-            .join("libfunc_seq_pass.so");
+        let plg_path = get_plugin_path()?;
 
         // check
         assert!(
@@ -201,15 +198,11 @@ impl CCArgs {
             return Ok(());
         }
 
-        let home = env::var("HOME")?;
-        let lib_dir = Path::new(&home)
-            .join(".local")
-            .join("lib")
-            .join("func_seq_pass");
+        let lib_dir = get_lib_dir()?;
         let lib_dir_flag = format!("-L{}", lib_dir.to_string_lossy());
         self.append_arg(lib_dir_flag);
 
-        let lib_name = "func_stack";
+        let lib_name = get_impl_lib_name();
         let lib_flag = format!("-l{}", lib_name);
         self.append_arg(lib_flag);
 
@@ -239,7 +232,7 @@ impl CCArgs {
     }
 
     fn show_args(&self) {
-        print!("{}", "under invocation".blue().bold());
+        print!("{}", "[under invocation] ".blue().bold());
         for (idx, arg) in self.args.iter().enumerate() {
             if idx > 0 {
                 print!(" ");

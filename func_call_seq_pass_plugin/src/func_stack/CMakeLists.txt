@@ -1,8 +1,0 @@
-
-file(GLOB CUR_SRC_FILES
-    "*.cc" "*.c" "*.cpp"
-)
-
-add_library(func_stack SHARED "${CUR_SRC_FILES}")
-
-install(TARGETS func_stack DESTINATION "${PLUGIN_NAME}")

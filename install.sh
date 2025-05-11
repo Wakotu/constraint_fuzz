@@ -1,9 +1,19 @@
 #!/bin/bash
 
+export FSP_INSTALL_PREFIX="$HOME"/.local/lib
+export FSP_NAME="func_stack_pass"
+export FSP_PLUGIN_LIB='func_stack_plugin'
+export FSP_IMPL_LIB='func_stack'
+
+if [[ ! -d "$FSP_INSTALL_PREFIX" ]]; then
+  mkdir -p "$FSP_INSTALL_PREFIX"
+fi
+
 echo "build and install function call stack plugin"
-plugin_dir='./func_call_seq_pass_plugin'
+plugin_dir='./func_stack_pass'
 pushd "$plugin_dir" || exit 1
 
+rm -rf build
 ./build.sh
 
 popd || exit 1

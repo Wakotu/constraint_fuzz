@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-void pop_func();
+void pop_func(const char *func_name);
 
 void push_func(const char *func_name);
 
