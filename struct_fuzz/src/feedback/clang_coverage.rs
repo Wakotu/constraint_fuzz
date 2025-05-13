@@ -2,6 +2,7 @@ use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
+    fmt::Debug,
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
@@ -435,15 +436,38 @@ impl Executor {
         Ok(())
     }
 
-    pub fn merge_profdata(profraw_files: &Vec<PathBuf>, profdata: &Path) -> Result<()> {
+    pub fn merge_profdata<T: AsRef<Path> + Debug>(
+        profraw_files: &[T],
+        profdata: &Path,
+    ) -> Result<()> {
         let mut output = Command::new("llvm-profdata");
         let cmd = output.arg("merge").arg("-sparse");
         for prof_file in profraw_files {
-            cmd.arg(prof_file);
+            let path_ref: &Path = prof_file.as_ref();
+            cmd.arg(path_ref);
         }
         let output = cmd.arg("-o").arg(profdata).output()?;
         if !output.status.success() {
             eyre::bail!("obtain coverage from profraw fail! :{profraw_files:?}")
+        }
+        Ok(())
+    }
+
+    pub fn export_cov_json_from_profadata(&self, profdata: &Path, json_path: &Path) -> Result<()> {
+        let out_file = File::create(json_path)?;
+        let json_out = Stdio::from(out_file);
+
+        let cov_lib = crate::deopt::utils::get_cov_lib_path(&self.deopt, true);
+        // view coverage report
+        let status = Command::new("llvm-cov")
+            .arg("export")
+            .arg(cov_lib)
+            .arg("--skip-expansions")
+            .arg(format!("--instr-profile={}", profdata.to_string_lossy()))
+            .stdout(json_out)
+            .status()?;
+        if !status.success() {
+            eyre::bail!("failed to collect code coverage from {profdata:?}\n")
         }
         Ok(())
     }

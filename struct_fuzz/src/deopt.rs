@@ -6,6 +6,7 @@ use crate::{
     feedback::{clang_coverage::CodeCoverage, observer::Observer},
     program::{serde::Serialize, Program},
 };
+use eyre::eyre;
 use eyre::{Context, Result};
 use once_cell::sync::OnceCell;
 use std::{
@@ -688,6 +689,7 @@ pub mod utils {
     use std::collections::HashSet;
 
     use chrono::Local;
+    use walkdir::WalkDir;
 
     use super::*;
 
@@ -714,12 +716,28 @@ pub mod utils {
         if !dir.is_dir() {
             eyre::bail!("{dir:?} is not a directory")
         }
-        for entry in std::fs::read_dir(dir)? {
-            let path = entry?.path();
-            entries.push(path);
+
+        for ent_res in WalkDir::new(dir) {
+            let ent = ent_res?;
+            let fpath = ent.path();
+            if fpath.is_file() {
+                entries.push(fpath.to_owned());
+            }
         }
+
+        // for entry in std::fs::read_dir(dir)? {
+        //     let path = entry?.path();
+        //     entries.push(path);
+        // }
         entries.sort();
         Ok(entries)
+    }
+
+    pub fn get_basename_str_from_path(fpath: &Path) -> Result<String> {
+        let basename = fpath
+            .file_name()
+            .ok_or_else(|| eyre!("Failed to get basename of {:?}", fpath))?;
+        Ok(basename.to_string_lossy().to_string())
     }
 
     /// format the headers of this library that should include as a single String.
@@ -827,6 +845,14 @@ pub mod utils {
                 .collect();
             lib_path
         })
+    }
+
+    pub fn get_file_parent_dir(fpath: &Path) -> &Path {
+        assert!(fpath.is_file(), "{fpath:?} is not a file");
+        let dir = fpath.parent().unwrap_or_else(|| {
+            panic!("Could not get parent dir for {:?}", fpath);
+        });
+        dir
     }
 
     pub fn get_file_dirname(path: &Path) -> PathBuf {

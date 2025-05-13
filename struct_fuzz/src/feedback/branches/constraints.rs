@@ -426,7 +426,7 @@ impl CovFunction {
 }
 
 impl CodeCoverage {
-    pub fn collect_rev_constraints_from_cov_pool(&self) -> Result<Vec<Constraint>> {
+    pub fn collect_rev_constraints_from_cov_by_pool(&self) -> Result<Vec<Constraint>> {
         let cpu_count = max_cpu_count();
         let pool = ThreadPool::new(cpu_count);
 

@@ -1,4 +1,4 @@
-use std::ptr::{addr_of, addr_of_mut};
+use std::{env, path::{Path, PathBuf}, ptr::{addr_of, addr_of_mut} };
 
 use once_cell::sync::OnceCell;
 use strum::Display;
@@ -66,6 +66,10 @@ pub const MAX_FUZZ_TIME: u64 = 600;
 
 pub const MAX_CONTEXT_APIS: usize = 100;
 
+// CC constatns
+pub const CXX: &str = "clang++";
+pub const CXX_WRAPPER: &str = "cxx_wrapper";
+
 // recover the report of UBSan, or we can use UBSAN_OPTIONS=symbolize=1:print_stacktrace=1:halt_on_error=1 instead.
 pub const SANITIZER_FLAGS: [&str; 7] = ["-fsanitize=fuzzer",
     "-g", 
@@ -95,6 +99,12 @@ pub const COVERAGE_FLAGS: [&str; 9] = ["-g",
     "-ftrivial-auto-var-init=zero",
     // "-enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang",
 ];
+
+pub fn get_func_pass_lib_dir() -> Result<PathBuf> {
+    let home = env::var("HOME")?;
+    let lib_dir= Path::new(&home).join(".local").join("lib").join("func_stack_pass");
+    Ok(lib_dir)
+}
 
 pub const ASAN_OPTIONS: [&str; 2] = [
     "exitcode=168",
@@ -164,7 +174,7 @@ pub fn parse_config() -> Result<()> {
 
 use clap::{Parser, ValueEnum};
 
-use crate::{deopt, Deopt};
+use crate::Deopt;
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author="Anonymous", name = "LLMFuzzer", version, about="A LLM based Fuzer", long_about = None)]

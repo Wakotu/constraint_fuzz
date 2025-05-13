@@ -405,12 +405,12 @@ pub mod utils {
     use color_eyre::eyre::Result;
     use std::process::Command;
 
-    pub fn show_cmd_args(cmd: &Command) {
+    pub fn show_cmd_args(cmd: &Command, prmp: &str) {
         let mut exec_args = vec![cmd.get_program().to_string_lossy().to_string()];
         for arg in cmd.get_args() {
             exec_args.push(arg.to_string_lossy().to_string());
         }
-        log::debug!("spawn args: {exec_args:?}");
+        log::debug!("{prmp} spawn args: {exec_args:?}");
     }
 
     /// Whether this variable is a fuzzable variable:

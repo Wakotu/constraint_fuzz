@@ -69,8 +69,8 @@ function coverage_env() {
   unset CXXFLAGS
   unset LDFLAGS
   blue_echo "set coverage env"
-  export CC=clang
-  export CXX=clang++
+  export CC=cc_wrapper
+  export CXX=cxx_wrapper
   COVERAGE_FLAGS="-g -fsanitize=fuzzer-no-link -fno-sanitize=undefined -fprofile-instr-generate -fcoverage-mapping -Wl,--no-as-needed -Wl,-ldl -Wl,-lm -Wno-unused-command-line-argument -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION "
   export CFLAGS="${CFLAGS:-} $COVERAGE_FLAGS"
   export CXXFLAGS="${CXXFLAGS:-} $COVERAGE_FLAGS"

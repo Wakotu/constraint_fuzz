@@ -1,4 +1,6 @@
 pub mod ast;
+use eyre::eyre;
+use tempfile::NamedTempFile;
 pub mod expe;
 pub mod logger;
 pub mod pch;
@@ -6,7 +8,10 @@ pub mod sanitize;
 
 use self::logger::ProgramError;
 use crate::ast::utils::show_cmd_args;
-use crate::config::{get_config, get_minimize_compile_flag};
+use crate::config::{get_config, get_func_pass_lib_dir, get_minimize_compile_flag, CXX_WRAPPER};
+use crate::deopt::utils::{
+    create_dir_if_nonexist, get_basename_str_from_path, get_file_parent_dir,
+};
 use crate::program::libfuzzer::respawn_libfuzzer_process;
 use crate::program::transform::Transformer;
 use crate::{
@@ -17,7 +22,10 @@ use crate::{
     Deopt,
 };
 use color_eyre::eyre::Result;
+use eyre::bail;
+use petgraph::graph::NodeWeightsMut;
 use regex::Regex;
+use std::env::{self, VarError};
 use std::ffi::OsString;
 use std::process::ChildStderr;
 use std::sync::{
@@ -90,7 +98,7 @@ impl Executor {
             Compile::Minimize => {
                 let mut flags = crate::config::FUZZER_FLAGS.to_vec();
                 let min_flag = get_minimize_compile_flag();
-                flags.push(&min_flag);
+                flags.push(min_flag);
                 let fuzz_lib = crate::deopt::utils::get_fuzzer_lib_path(&self.deopt);
                 (flags, fuzz_lib)
             }
@@ -98,11 +106,20 @@ impl Executor {
         (cflags, lib)
     }
 
+    fn get_compile_cc(kind: Compile) -> &'static str {
+        if let Compile::COVERAGE = kind {
+            return crate::config::CXX_WRAPPER;
+        }
+        crate::config::CXX
+    }
+
     /// compile programs into binary.
     pub fn compile(&self, programs: Vec<&Path>, out: &Path, kind: Compile) -> Result<()> {
         let (cflags, lib) = self.get_compile_flags(kind);
 
-        let mut cmd = Command::new("clang++");
+        let cc = Self::get_compile_cc(kind);
+
+        let mut cmd = Command::new(cc);
         for program in &programs {
             cmd.arg(*program);
         }
@@ -122,7 +139,7 @@ impl Executor {
         self.deopt.add_extra_c_flags(cmd)?;
 
         log::debug!("compile kind: {kind:?}");
-        show_cmd_args(cmd);
+        show_cmd_args(cmd, "Fuzzer compile");
 
         let output = cmd
             .output()
@@ -137,15 +154,20 @@ impl Executor {
         Ok(())
     }
 
-    pub fn spawn<S: AsRef<OsStr> + Debug>(
+    pub fn spawn<S1, S2, S3>(
         &self,
         binary: &Path,
-        extra_args: Vec<S>,
-        extra_envs: Vec<(S, S)>,
+        extra_args: Vec<S1>,
+        extra_envs: Vec<(S2, S3)>,
         current_dir: Option<PathBuf>,
         stderr: Option<Stdio>,
         enough_timeout: bool,
-    ) -> Child {
+    ) -> Child
+    where
+        S1: AsRef<OsStr>,
+        S2: AsRef<OsStr>,
+        S3: AsRef<OsStr>,
+    {
         let mut exec = Command::new(binary);
         for arg in &extra_args {
             exec.arg(arg);
@@ -179,7 +201,7 @@ impl Executor {
             .stderr(stderr);
 
         // echoes args
-        show_cmd_args(exec);
+        show_cmd_args(exec, "General/Unknown");
 
         exec.spawn().expect("unable to spawn the fuzzer")
     }
@@ -296,7 +318,7 @@ impl Executor {
         let mut child = self.spawn(
             fuzzer,
             extra_args,
-            vec![],
+            Vec::<(&OsStr, &OsStr)>::new(),
             None,
             Some(std::fs::File::create(&log_file)?.into()),
             false,
@@ -332,7 +354,7 @@ impl Executor {
                     eyre::bail!("cost time: {cost_time} \n{err_msg}")
                 }
                 Ok(None) => {
-                    log::debug!("{fuzzer:?} running.");
+                    log::debug!("FUZZ RUN: {fuzzer:?} running.");
                     if should_break {
                         child.kill()?;
                         child.wait()?;
@@ -347,15 +369,58 @@ impl Executor {
         }
     }
 
+    fn get_isntru_extra_env(
+        profraw: &Path,
+        case_fs_dir: &Path,
+    ) -> Result<Vec<(&'static OsStr, OsString)>> {
+        let prev_ld_lib = match env::var("LD_LIBRARY_PATH") {
+            Ok(x) => x,
+            Err(e) => match e {
+                VarError::NotPresent => "".to_owned(),
+                VarError::NotUnicode(ve) => {
+                    bail!("Invalid value for LD_LIBRARY_PATH env var: {:?}", ve);
+                }
+            },
+        };
+
+        let fc_lib_dir = get_func_pass_lib_dir()?;
+        let ld_lib = format!("{}:{}", fc_lib_dir.to_string_lossy(), prev_ld_lib);
+
+        Ok(vec![
+            (
+                OsStr::new("LLVM_PROFILE_FILE"),
+                profraw.as_os_str().to_os_string(),
+                // profraw.to_str().map(|s| s.to_owned()).unwrap(),
+            ),
+            (
+                OsStr::new("FUNC_STACK_OUT"),
+                case_fs_dir.as_os_str().to_os_string(),
+            ),
+            (OsStr::new("LD_LIBRARY_PATH"), OsString::from(ld_lib)),
+        ])
+    }
+
     pub fn execute_cov_fuzzer(
         &self,
         fuzzer_binary: &Path,
-        corpus_dir: &Path,
+        case: &Path,
         profraw: &Path,
+        case_fs_dir: &Path,
+        case_cov: &Path,
     ) -> Result<()> {
-        let extra_envs = vec![(OsStr::new("LLVM_PROFILE_FILE"), profraw.as_os_str())];
-        let extra_args = vec![OsStr::new("-runs=0"), corpus_dir.as_os_str()];
+        let extra_envs = Self::get_isntru_extra_env(profraw, case_fs_dir)?;
+        let extra_args = vec![case.as_os_str()];
+
         let mut child = self.spawn(fuzzer_binary, extra_args, extra_envs, None, None, false);
+
+        let case_name = match get_basename_str_from_path(case) {
+            Ok(name) => name,
+            Err(e) => {
+                panic!("Failed to get case name: {e}");
+            }
+        };
+        log::debug!("COV RUN: execution for {} spawned", case_name);
+
         let timeout = std::time::Duration::from_secs(crate::config::EXECUTION_TIMEOUT);
         let status = match child.wait_timeout(timeout).unwrap() {
             Some(status) => status.code(),
@@ -365,13 +430,42 @@ impl Executor {
             }
         };
         if !is_exit_normally(status) {
-            log::warn!("execute fuzz_cov failed! {fuzzer_binary:?}, {corpus_dir:?}");
+            log::warn!("execute fuzz_cov failed! {fuzzer_binary:?}, {case:?}");
             if let Some(err) = child.stderr.take() {
                 let err_msg = get_child_err(err);
                 log::error!("Error: {err_msg}");
             }
         }
+        self.gen_and_save_case_cov(profraw, case_cov)?;
         Ok(())
+    }
+
+    pub fn gen_and_save_case_cov(&self, profraw: &Path, case_cov: &Path) -> Result<()> {
+        let tmp = NamedTempFile::new()?;
+        let profdata = tmp.path();
+        Self::merge_profdata(&[profraw], profdata)?;
+        self.export_cov_json_from_profadata(profdata, case_cov)?;
+        Ok(())
+    }
+
+    fn collect_corpus_cases(corpus_dirs: &[&Path]) -> Vec<PathBuf> {
+        let corpus_files: Vec<Vec<PathBuf>> = corpus_dirs
+            .iter()
+            .map(|dir| crate::deopt::utils::read_sort_dir(dir).expect("read dir should not fial"))
+            .collect();
+        corpus_files.concat()
+    }
+
+    fn setup_exec_msg_dir(fuzzer: &Path) -> Result<(PathBuf, PathBuf)> {
+        let work_dir = get_file_parent_dir(fuzzer);
+        let msg_dir = work_dir.join("exec_msg");
+        create_dir_if_nonexist(&msg_dir)?;
+        let func_sta_dir = msg_dir.join("func_stack");
+        let exec_cov_dir = msg_dir.join("cov");
+        create_dir_if_nonexist(&func_sta_dir)?;
+        create_dir_if_nonexist(&exec_cov_dir)?;
+
+        Ok((func_sta_dir, exec_cov_dir))
     }
 
     pub fn execute_cov_fuzzer_pool(
@@ -380,40 +474,44 @@ impl Executor {
         corpus_dirs: &[&Path],
         profdata: &Path,
     ) -> Result<()> {
-        let fuzzer_dir = get_file_dirname(fuzzer_binary);
-        let profraw_dir: PathBuf = [fuzzer_dir.clone(), "profraw".into()].iter().collect();
+        let fuzzer_dir = get_file_parent_dir(fuzzer_binary);
+        let profraw_dir = fuzzer_dir.join("profraw");
         if profraw_dir.exists() {
             std::fs::remove_dir_all(&profraw_dir)?;
         }
         crate::deopt::utils::create_dir_if_nonexist(&profraw_dir)?;
-        let corpus_files: Vec<Vec<PathBuf>> = corpus_dirs
-            .iter()
-            .map(|dir| crate::deopt::utils::read_sort_dir(dir).expect("read dir should not fial"))
-            .collect();
-        let corpus_files: Vec<PathBuf> = corpus_files.concat();
+
+        // setup execution msg dir
+        let (func_sta_dir, exec_cov_dir) = Self::setup_exec_msg_dir(fuzzer_binary)?;
+
+        // collect corpuse cases
+        let corpus_files = Self::collect_corpus_cases(corpus_dirs);
+
+        // setup thread pool
         let cpu_count = max_cpu_count();
         let pool = ThreadPool::new(cpu_count);
 
-        for (id, corpus_file) in corpus_files.iter().enumerate() {
+        // concurrent executio for each corpus case
+        for (id, case_file) in corpus_files.iter().enumerate() {
             let binary = fuzzer_binary.to_path_buf();
-            let corpus_file = corpus_file.to_path_buf();
-            let corpus_name = corpus_file
-                .file_name()
-                .expect("file name of corpus file should not be empty")
-                .to_string_lossy()
-                .to_string();
+            let case_file = case_file.to_path_buf();
+            let case_name = get_basename_str_from_path(&case_file)?;
             let profraw_file: PathBuf = [
                 PathBuf::from(&profraw_dir),
-                format!("{corpus_name}.profraw").into(),
+                format!("{case_name}.profraw").into(),
             ]
             .iter()
             .collect();
             let len = corpus_files.len();
             let executor = self.clone();
 
+            let case_fs_dir = func_sta_dir.join(&case_name);
+            create_dir_if_nonexist(&case_fs_dir)?;
+            let case_cov = exec_cov_dir.join(&case_name);
+
             pool.execute(move || {
                 executor
-                    .execute_cov_fuzzer(&binary, &corpus_file, &profraw_file)
+                    .execute_cov_fuzzer(&binary, &case_file, &profraw_file, &case_fs_dir, &case_cov)
                     .unwrap();
                 log::trace!("execute fuzz_cov on corpus finished {id}/{}", len);
             });
@@ -424,6 +522,18 @@ impl Executor {
         Self::merge_profdata(&profraws, profdata)?;
         std::fs::remove_dir_all(profraw_dir)?;
         Ok(())
+    }
+
+    pub fn get_code_cov_from_profdata(
+        &self,
+        fuzzer_bin: &Path,
+        fuzzer_code: &Path,
+        profdata: &Path,
+    ) -> Result<CodeCoverage> {
+        let cov = self.obtain_cov_from_profdata(profdata)?;
+        let lcov = self.obtain_fuzzer_cov_from_profdata(profdata, fuzzer_code, fuzzer_bin)?;
+        let cov = cov.set_fuzzer_lines(lcov);
+        Ok(cov)
     }
 
     pub fn collect_code_coverage(
@@ -463,7 +573,14 @@ impl Executor {
             minimize.as_os_str(),
             corpus.as_os_str(),
         ];
-        let child = self.spawn(fuzzer_binary, extra_args, vec![], None, None, false);
+        let child = self.spawn::<&OsStr, &OsStr, &OsStr>(
+            fuzzer_binary,
+            extra_args,
+            vec![],
+            None,
+            None,
+            false,
+        );
         let output = child.wait_with_output()?;
         if !output.status.success() {
             eyre::bail!("Fail to merge corpus in {fuzzer_binary:?}")
@@ -490,7 +607,14 @@ impl Executor {
             minimize_dir.as_os_str(),
             corpus.as_os_str(),
         ];
-        let child = self.spawn(fuzzer_binary, extra_args, vec![], None, None, false);
+        let child = self.spawn::<&OsStr, &OsStr, &OsStr>(
+            fuzzer_binary,
+            extra_args,
+            vec![],
+            None,
+            None,
+            false,
+        );
         let output = child.wait_with_output()?;
         if !output.status.success() {
             eyre::bail!("Fail to merge corpus in {fuzzer_binary:?}")
@@ -611,7 +735,7 @@ impl Executor {
         let child = self.spawn(
             fuzzer_binary,
             extra_args,
-            vec![],
+            Vec::<(&OsStr, &OsStr)>::new(),
             Some(fuzzer_work_dir),
             Some(std::fs::File::create(log_file)?.into()),
             false,
