@@ -78,7 +78,7 @@ RUN apt-get update \
     && apt-get clean 
 
 # add go PATH env var
-ENV PATH=/root/go/bin:$PATH
+ENV PATH=/root/.local/bin:/root/go/bin:$PATH
 
 RUN go install github.com/SRI-CSL/gllvm/cmd/...@latest
 
