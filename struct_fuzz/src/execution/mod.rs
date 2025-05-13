@@ -1,4 +1,5 @@
 pub mod ast;
+use expe::case_map::get_rec_name_from_case_path;
 use eyre::eyre;
 use tempfile::NamedTempFile;
 pub mod expe;
@@ -495,19 +496,20 @@ impl Executor {
         for (id, case_file) in corpus_files.iter().enumerate() {
             let binary = fuzzer_binary.to_path_buf();
             let case_file = case_file.to_path_buf();
-            let case_name = get_basename_str_from_path(&case_file)?;
+            let rec_name = get_rec_name_from_case_path(&case_file)?;
+            // let rec_name = get_basename_str_from_path(&case_file)?;
             let profraw_file: PathBuf = [
                 PathBuf::from(&profraw_dir),
-                format!("{case_name}.profraw").into(),
+                format!("{rec_name}.profraw").into(),
             ]
             .iter()
             .collect();
             let len = corpus_files.len();
             let executor = self.clone();
 
-            let case_fs_dir = func_sta_dir.join(&case_name);
+            let case_fs_dir = func_sta_dir.join(&rec_name);
             create_dir_if_nonexist(&case_fs_dir)?;
-            let case_cov = exec_cov_dir.join(&case_name);
+            let case_cov = exec_cov_dir.join(&rec_name);
 
             pool.execute(move || {
                 executor
@@ -524,6 +526,7 @@ impl Executor {
         Ok(())
     }
 
+    // export
     pub fn get_code_cov_from_profdata(
         &self,
         fuzzer_bin: &Path,
@@ -536,6 +539,7 @@ impl Executor {
         Ok(cov)
     }
 
+    // run + merge + epxort
     pub fn collect_code_coverage(
         &self,
         fuzzer_code: Option<&Path>,

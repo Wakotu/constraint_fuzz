@@ -15,6 +15,8 @@ use color_eyre::eyre::Result;
 pub mod instru_cov_run;
 pub mod paths;
 
+pub mod case_map;
+
 // #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 // pub enum CovFormat {
 //     SHOW,
