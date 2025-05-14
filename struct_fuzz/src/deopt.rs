@@ -686,7 +686,11 @@ impl Deopt {
 }
 
 pub mod utils {
-    use std::collections::HashSet;
+    use std::{
+        collections::HashSet,
+        fs::File,
+        io::{BufReader, Read},
+    };
 
     use chrono::Local;
     use walkdir::WalkDir;
@@ -697,6 +701,19 @@ pub mod utils {
     pub fn get_formatted_time() -> String {
         let now = Local::now();
         now.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+
+    /**
+     * file related
+     */
+
+    pub fn buffer_read_to_bytes(fpath: &Path) -> Result<Vec<u8>> {
+        // buffer read
+        let file = File::open(fpath)?;
+        let mut reader = BufReader::new(file);
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        Ok(buf)
     }
 
     /// create the directory if it does not exist

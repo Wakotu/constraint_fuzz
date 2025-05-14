@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 pub mod adg;
 pub mod callgraph;
 pub mod cfg;
+pub mod constraint;
 pub mod dfa;
 pub mod fdsan;
 pub mod header;

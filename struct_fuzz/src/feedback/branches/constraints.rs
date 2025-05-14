@@ -13,7 +13,7 @@ use crate::{
 use color_eyre::eyre::Result;
 use eyre::bail;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use threadpool::ThreadPool;
 
@@ -151,7 +151,7 @@ impl CovRegionTrait for CovRegion {
         Ok(flag)
     }
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Constraint {
     cond_expr: String,
     res: bool,
@@ -164,6 +164,10 @@ pub struct Constraint {
 }
 
 impl Constraint {
+    pub fn get_func_sig(&self) -> &str {
+        &self.func_sig
+    }
+
     fn get_cond_expr_in_fname(&self) -> String {
         self.cond_expr
             .chars()
