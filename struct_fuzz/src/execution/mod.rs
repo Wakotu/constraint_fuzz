@@ -1,6 +1,5 @@
 pub mod ast;
 use expe::case_map::get_exec_name_from_case_path;
-use eyre::eyre;
 use tempfile::NamedTempFile;
 pub mod expe;
 pub mod logger;
@@ -9,7 +8,7 @@ pub mod sanitize;
 
 use self::logger::ProgramError;
 use crate::ast::utils::show_cmd_args;
-use crate::config::{get_config, get_func_pass_lib_dir, get_minimize_compile_flag, CXX_WRAPPER};
+use crate::config::{get_config, get_func_pass_lib_dir, get_minimize_compile_flag};
 use crate::deopt::utils::{
     create_dir_if_nonexist, get_basename_str_from_path, get_file_parent_dir,
 };
@@ -24,7 +23,6 @@ use crate::{
 };
 use color_eyre::eyre::Result;
 use eyre::bail;
-use petgraph::graph::NodeWeightsMut;
 use regex::Regex;
 use std::env::{self, VarError};
 use std::ffi::OsString;
@@ -459,12 +457,9 @@ impl Executor {
 
     fn setup_exec_msg_dir(fuzzer: &Path) -> Result<(PathBuf, PathBuf)> {
         let work_dir = get_file_parent_dir(fuzzer);
-        let msg_dir = work_dir.join("exec_msg");
-        create_dir_if_nonexist(&msg_dir)?;
-        let func_sta_dir = msg_dir.join("func_stack");
-        let exec_cov_dir = msg_dir.join("cov");
-        create_dir_if_nonexist(&func_sta_dir)?;
-        create_dir_if_nonexist(&exec_cov_dir)?;
+
+        let func_sta_dir = Deopt::get_func_stack_dir(work_dir)?;
+        let exec_cov_dir = Deopt::get_exec_cov_dir(work_dir)?;
 
         Ok((func_sta_dir, exec_cov_dir))
     }

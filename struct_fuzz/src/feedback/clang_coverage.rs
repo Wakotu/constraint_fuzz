@@ -12,7 +12,10 @@ use std::{
 use crate::{deopt::utils::get_file_dirname, feedback::observer::Observer};
 use crate::{execution::Executor, program::serde::Deserializer};
 
-use super::branches::{parse_branch, Branch};
+use super::branches::{
+    constraints::{Range, RangeTrait},
+    parse_branch, Branch,
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CodeCoverage {
@@ -169,9 +172,13 @@ pub trait BranchCount {
     fn get_false_count(&self) -> &usize;
     fn get_covered_branch(&self) -> Vec<Branch>;
     fn get_unselected_branch(&self) -> Option<Branch>;
+    fn get_range(&self) -> Result<Range>;
 }
 
 impl BranchCount for CovBranch {
+    fn get_range(&self) -> Result<Range> {
+        Range::from_slice(self)
+    }
     fn get_true_count(&self) -> &usize {
         &self[4]
     }

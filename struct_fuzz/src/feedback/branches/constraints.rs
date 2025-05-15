@@ -156,16 +156,34 @@ pub struct Constraint {
     cond_expr: String,
     res: bool,
     fpath: PathBuf,
-    range: Range,
-    func_sig: String,
+    pub range: Range,
+    pub func_sig: String,
     /// Function Body as slice
     slice: String,
     macro_mapping: MacMapping,
 }
 
+/// Extracts the function name from a function signature string.
+/// Example: "void foo(int a, int b)" -> "foo"
+fn extract_func_name_from_sig(sig: &str) -> Option<String> {
+    // Find the part before the first '('
+    let before_paren = sig.split('(').next()?;
+    // Split by whitespace and take the last part (the function name)
+    let name = before_paren.split_whitespace().last()?;
+    Some(name.to_string())
+}
 impl Constraint {
     pub fn get_func_sig(&self) -> &str {
         &self.func_sig
+    }
+
+    pub fn get_func_name(&self) -> Result<String> {
+        extract_func_name_from_sig(&self.func_sig).ok_or_else(|| {
+            eyre::eyre!(
+                "Failed to extract function name from signature: {}",
+                self.func_sig
+            )
+        })
     }
 
     fn get_cond_expr_in_fname(&self) -> String {

@@ -1,9 +1,13 @@
+use constraints::Range;
+use constraints::RangeTrait;
+
 use crate::{
     analysis::callgraph::get_lib_call_graph, config::get_config, program::get_exec_counter,
 };
 use std::collections::{HashMap, HashSet};
 
 use super::clang_coverage::{CodeCoverage, CovBranch};
+use color_eyre::eyre::Result;
 
 pub mod constraints;
 
@@ -17,9 +21,14 @@ pub type Branch = [usize; 8];
 pub trait BranchTrait {
     fn get_branch_fileid(&self) -> usize;
     fn branch_eval(&self) -> bool;
+    fn get_range(&self) -> Result<Range>;
 }
 
 impl BranchTrait for Branch {
+    fn get_range(&self) -> Result<Range> {
+        Range::from_slice(&self[..4])
+    }
+
     fn get_branch_fileid(&self) -> usize {
         self[4]
     }
