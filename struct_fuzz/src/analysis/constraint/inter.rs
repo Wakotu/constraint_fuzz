@@ -1,4 +1,5 @@
 use std::{
+    fs,
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -6,7 +7,10 @@ use std::{
 
 use crate::{
     deopt::{
-        utils::{buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path},
+        utils::{
+            buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path,
+            get_parent_dir,
+        },
         Deopt,
     },
     feedback::{
@@ -32,7 +36,7 @@ impl Deopt {
      */
 
     pub fn get_exec_msg_dir(work_dir: &Path) -> Result<PathBuf> {
-        let msg_dir = work_dir.join("exec_msgs");
+        let msg_dir = work_dir.join("exec_msg");
         create_dir_if_nonexist(&msg_dir)?;
         Ok(msg_dir)
     }
@@ -53,41 +57,37 @@ impl Deopt {
 }
 
 // Define executions as exec name + cov + func stack. (file path or value)
-struct Exec {
+#[derive(Debug, Clone)]
+pub struct Exec {
     exec_name: String,
     // func stack path
-    fs_path: PathBuf,
+    fs_dir: PathBuf,
 }
 
 impl Exec {
     pub fn from_cov_path(cov_path: &Path) -> Result<Self> {
         let exec_name = get_basename_str_from_path(cov_path)?;
 
-        let fs_path = cov_path
-            .parent()
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "Failed to get parent directory for coverage path: {}",
-                    cov_path.display()
-                )
-            })?
-            .join("func_stack")
-            .join(&exec_name);
+        let cov_dir = get_parent_dir(cov_path)?;
+        let fs_dir = get_parent_dir(cov_dir)?.join("func_stack").join(&exec_name);
 
-        Ok(Self { exec_name, fs_path })
+        Ok(Self { exec_name, fs_dir })
     }
 }
 
 impl CodeCoverage {
     pub fn contains_cons(&self, cons: &Constraint) -> Result<bool> {
         let func_name = cons.get_func_name()?;
+        let fpath = &cons.fpath;
         for func in self.iter_function_covs() {
             if func.get_name() != func_name {
                 continue;
             }
             for br in func.branches.iter() {
+                let cov_fpath = func.get_source_file_path_by_cov_branch(br)?;
                 let rng = br.get_range()?;
-                if rng == cons.range {
+                // checks source file path and range equivalence
+                if &cov_fpath == fpath && rng == cons.range {
                     return Ok(true);
                 }
             }
@@ -103,9 +103,9 @@ struct FuncStack {
 }
 
 impl FuncStack {
-    pub fn new(target_func: String, fs_path: &Path) -> Self {
+    pub fn new(target_func: &str, fs_path: &Path) -> Self {
         Self {
-            target_func,
+            target_func: target_func.to_owned(),
             sta: Vec::new(),
             fs_path: fs_path.to_owned(),
         }
@@ -182,43 +182,85 @@ impl FuncStack {
 }
 
 impl ConsDFBuilder {
-    // judge related based on cov and then constructs the related ones only
-    fn get_related_executions(&self) -> Result<Vec<Exec>> {
+    fn get_related_executions_with_num(&self, num: Option<usize>) -> Result<Vec<Exec>> {
         let exec_cov_dir = Deopt::get_exec_cov_dir(&self.work_dir)?;
 
         let mut exec_list: Vec<Exec> = vec![];
         // iterate over all files in the coverage directory
-        for ent_res in walkdir::WalkDir::new(&exec_cov_dir).into_iter() {
+        // TODO: needs multi-threading
+        for ent_res in fs::read_dir(&exec_cov_dir)? {
             let entry = ent_res?;
 
             let fpath = entry.path();
             // get cov
-            let json_slice = buffer_read_to_bytes(fpath)?;
+            let json_slice = buffer_read_to_bytes(&fpath)?;
             let cov: CodeCoverage = serde_json::from_slice(&json_slice)?;
 
             if cov.contains_cons(&self.cons)? {
-                let exec = Exec::from_cov_path(fpath)?;
+                let exec = Exec::from_cov_path(&fpath)?;
+                log::debug!("exec: {} related and collected", exec.exec_name);
                 exec_list.push(exec);
+            } else {
+                let exec = Exec::from_cov_path(&fpath)?;
+                log::debug!("exec: {} not related", exec.exec_name);
+            }
+
+            // check len
+            if let Some(num) = num {
+                if exec_list.len() >= num {
+                    break;
+                }
             }
         }
 
         Ok(exec_list)
     }
+    // iterate over all files in the coverage directory
+    // judge related based on cov and then constructs the related ones only
+    pub fn get_related_executions(&self) -> Result<Vec<Exec>> {
+        self.get_related_executions_with_num(None)
+    }
 
-    fn extract_func_chain(&self, exec: &Exec) -> Result<FuncChain> {
-        let fs_path = &exec.fs_path;
+    fn extract_func_chain(&self, exec: &Exec) -> Result<Vec<FuncChain>> {
+        let mut chain_list = vec![];
+        for ent_res in fs::read_dir(&exec.fs_dir)? {
+            let entry = ent_res?;
+            let fs_path = entry.path();
+            assert!(fs_path.is_file(), "Expected a file: {}", fs_path.display());
+            // if !fs_path.exists() {
+            //     bail!(
+            //         "Function stack file for {} does not exist: {}",
+            //         &exec.exec_name,
+            //         fs_path.display()
+            //     );
+            // }
 
-        if !fs_path.exists() {
-            bail!(
-                "Function stack file for {} does not exist: {}",
-                &exec.exec_name,
-                fs_path.display()
+            // recover the stack
+            let mut func_stack = FuncStack::new(&self.cons.get_func_name()?, &fs_path);
+            let chain = match func_stack.get_chain() {
+                Ok(chain) => chain,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to get function chain for {}: {}",
+                        fs_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            assert!(
+                !chain.is_empty(),
+                "Function chain is empty for exec: {}",
+                exec.exec_name
             );
+            chain_list.push(chain);
         }
-
-        // recover the stack
-        let mut func_stack = FuncStack::new(exec.exec_name.clone(), &fs_path);
-        func_stack.get_chain()
+        assert!(
+            !chain_list.is_empty(),
+            "No function chains found for exec: {}",
+            exec.exec_name
+        );
+        Ok(chain_list)
     }
 }
 
@@ -227,26 +269,35 @@ impl ConsDFBuilder {
  */
 #[cfg(test)]
 mod tests {
+    use crate::init_report_utils_for_tests;
+
     use super::*;
-    use crate::deopt::utils::test_utils::setup_test_env;
+
+    fn setup_test_consdf_builder() -> Result<ConsDFBuilder> {
+        let work_dir =
+            "/struct_fuzz/struct_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49";
+        let json_slice = buffer_read_to_bytes("/struct_fuzz/struct_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49/constraints.json");
+        let cons_list: Vec<Constraint> = serde_json::from_slice(&json_slice?)?;
+        let builder = ConsDFBuilder::new(&cons_list[0], work_dir);
+        Ok(builder)
+    }
 
     #[test]
     fn test_get_related_executions() -> Result<()> {
-        let (work_dir, cons) = setup_test_env()?;
-        let builder = ConsDFBuilder::new(work_dir.clone(), cons.clone());
-
-        let execs = builder.get_related_executions()?;
-        assert!(!execs.is_empty(), "No related executions found");
+        init_report_utils_for_tests()?;
+        let builder = setup_test_consdf_builder()?;
+        let exec_list = builder.get_related_executions()?;
+        log::debug!("exec_list: {:?}", exec_list);
 
         Ok(())
     }
 
     #[test]
     fn test_extract_func_chain() -> Result<()> {
-        let (work_dir, cons) = setup_test_env()?;
-        let builder = ConsDFBuilder::new(work_dir.clone(), cons.clone());
+        init_report_utils_for_tests()?;
+        let builder = setup_test_consdf_builder()?;
 
-        let execs = builder.get_related_executions()?;
+        let execs = builder.get_related_executions_with_num(Some(1))?;
         for exec in execs {
             let chain = builder.extract_func_chain(&exec)?;
             assert!(
@@ -254,6 +305,7 @@ mod tests {
                 "Function chain is empty for exec: {}",
                 exec.exec_name
             );
+            log::debug!("Function chain for {}: {:?}", exec.exec_name, chain);
         }
 
         Ok(())

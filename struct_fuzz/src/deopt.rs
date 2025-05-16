@@ -707,9 +707,13 @@ pub mod utils {
      * file related
      */
 
-    pub fn buffer_read_to_bytes(fpath: &Path) -> Result<Vec<u8>> {
+    pub fn buffer_read_to_bytes<P: AsRef<Path>>(fpath: P) -> Result<Vec<u8>> {
         // buffer read
-        let file = File::open(fpath)?;
+
+        let path = fpath.as_ref();
+        // log::debug!("passed file path: {:?}", path);
+        assert!(path.is_file(), "{path:?} is not a file");
+        let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf)?;
@@ -723,6 +727,10 @@ pub mod utils {
         }
         Ok(())
     }
+
+    /**
+     * path related
+     */
 
     /// read the directory and sort the entries by the alphabet oder
     pub fn read_sort_dir(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -862,6 +870,14 @@ pub mod utils {
                 .collect();
             lib_path
         })
+    }
+
+    pub fn get_parent_dir(path: impl AsRef<Path>) -> Result<PathBuf> {
+        let path = path.as_ref();
+        let parent = path
+            .parent()
+            .ok_or_else(|| eyre!("Cannot get parent dir of {path:?}"))?;
+        Ok(parent.to_path_buf())
     }
 
     pub fn get_file_parent_dir(fpath: &Path) -> &Path {

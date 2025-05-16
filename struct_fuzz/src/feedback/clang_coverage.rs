@@ -173,9 +173,13 @@ pub trait BranchCount {
     fn get_covered_branch(&self) -> Vec<Branch>;
     fn get_unselected_branch(&self) -> Option<Branch>;
     fn get_range(&self) -> Result<Range>;
+    fn get_fileid(&self) -> usize;
 }
 
 impl BranchCount for CovBranch {
+    fn get_fileid(&self) -> usize {
+        self[6]
+    }
     fn get_range(&self) -> Result<Range> {
         Range::from_slice(self)
     }

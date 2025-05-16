@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::feedback::branches::constraints::Constraint;
 use color_eyre::eyre::Result;
@@ -20,8 +20,11 @@ pub struct ConsDFBuilder {
 }
 
 impl ConsDFBuilder {
-    pub fn new(cons: Constraint, work_dir: PathBuf) -> Self {
-        Self { cons, work_dir }
+    pub fn new<P: AsRef<Path>>(cons: &Constraint, work_dir: P) -> Self {
+        Self {
+            cons: cons.clone(),
+            work_dir: work_dir.as_ref().to_path_buf(),
+        }
     }
     pub fn analyze_constraint(&self, cons: &Constraint) -> Result<ConsDFInfo> {
         todo!()

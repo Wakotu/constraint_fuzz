@@ -8,7 +8,9 @@ use std::{
 
 use crate::{
     execution::max_cpu_count,
-    feedback::clang_coverage::{get_cov_region_fileid, CodeCoverage, CovFunction, CovRegion},
+    feedback::clang_coverage::{
+        get_cov_region_fileid, BranchCount, CodeCoverage, CovBranch, CovFunction, CovRegion,
+    },
 };
 use color_eyre::eyre::Result;
 use eyre::bail;
@@ -155,7 +157,7 @@ impl CovRegionTrait for CovRegion {
 pub struct Constraint {
     cond_expr: String,
     res: bool,
-    fpath: PathBuf,
+    pub fpath: PathBuf,
     pub range: Range,
     pub func_sig: String,
     /// Function Body as slice
@@ -241,6 +243,12 @@ impl CovFunction {
 
     pub fn get_source_file_path_by_region(&self, rgn: &CovRegion) -> Result<PathBuf> {
         let file_id = rgn.get_file_id();
+        let fpath = self.get_source_file_path_by_file_id(file_id)?;
+        Ok(fpath)
+    }
+
+    pub fn get_source_file_path_by_cov_branch(&self, cov_br: &CovBranch) -> Result<PathBuf> {
+        let file_id = cov_br.get_fileid();
         let fpath = self.get_source_file_path_by_file_id(file_id)?;
         Ok(fpath)
     }
