@@ -58,13 +58,13 @@ impl Deopt {
 
 // Define executions as exec name + cov + func stack. (file path or value)
 #[derive(Debug, Clone)]
-pub struct Exec {
+pub struct ExecRec {
     exec_name: String,
     // func stack path
     fs_dir: PathBuf,
 }
 
-impl Exec {
+impl ExecRec {
     pub fn from_cov_path(cov_path: &Path) -> Result<Self> {
         let exec_name = get_basename_str_from_path(cov_path)?;
 
@@ -182,10 +182,10 @@ impl FuncStack {
 }
 
 impl ConsDFBuilder {
-    fn get_related_executions_with_num(&self, num: Option<usize>) -> Result<Vec<Exec>> {
+    fn get_related_executions_with_num(&self, num: Option<usize>) -> Result<Vec<ExecRec>> {
         let exec_cov_dir = Deopt::get_exec_cov_dir(&self.work_dir)?;
 
-        let mut exec_list: Vec<Exec> = vec![];
+        let mut exec_list: Vec<ExecRec> = vec![];
         // iterate over all files in the coverage directory
         // TODO: needs multi-threading
         for ent_res in fs::read_dir(&exec_cov_dir)? {
@@ -197,11 +197,11 @@ impl ConsDFBuilder {
             let cov: CodeCoverage = serde_json::from_slice(&json_slice)?;
 
             if cov.contains_cons(&self.cons)? {
-                let exec = Exec::from_cov_path(&fpath)?;
+                let exec = ExecRec::from_cov_path(&fpath)?;
                 log::debug!("exec: {} related and collected", exec.exec_name);
                 exec_list.push(exec);
             } else {
-                let exec = Exec::from_cov_path(&fpath)?;
+                let exec = ExecRec::from_cov_path(&fpath)?;
                 log::debug!("exec: {} not related", exec.exec_name);
             }
 
@@ -217,11 +217,11 @@ impl ConsDFBuilder {
     }
     // iterate over all files in the coverage directory
     // judge related based on cov and then constructs the related ones only
-    pub fn get_related_executions(&self) -> Result<Vec<Exec>> {
+    pub fn get_related_executions(&self) -> Result<Vec<ExecRec>> {
         self.get_related_executions_with_num(None)
     }
 
-    fn extract_func_chain(&self, exec: &Exec) -> Result<Vec<FuncChain>> {
+    pub fn extract_func_chain(&self, exec: &ExecRec) -> Result<Vec<FuncChain>> {
         let mut chain_list = vec![];
         for ent_res in fs::read_dir(&exec.fs_dir)? {
             let entry = ent_res?;
