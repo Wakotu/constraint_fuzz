@@ -697,6 +697,11 @@ pub mod utils {
 
     use super::*;
 
+    pub fn deduplicate_unordered<T: Eq + std::hash::Hash + Clone>(vec: &mut Vec<T>) {
+        let mut seen = HashSet::new();
+        vec.retain(|x| seen.insert(x.clone())); // Retain only if insertion into HashSet is new
+    }
+
     // time related
     pub fn get_formatted_time() -> String {
         let now = Local::now();

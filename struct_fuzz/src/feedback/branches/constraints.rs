@@ -175,6 +175,13 @@ fn extract_func_name_from_sig(sig: &str) -> Option<String> {
     Some(name.to_string())
 }
 impl Constraint {
+    pub fn get_cons_name(&self) -> Result<String> {
+        let func_name = self.get_func_name()?;
+
+        let cons_name = format!("{:?}::{}::{}", &self.fpath, func_name, &self.cond_expr);
+        Ok(cons_name)
+    }
+
     pub fn get_func_sig(&self) -> &str {
         &self.func_sig
     }

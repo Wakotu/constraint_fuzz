@@ -7,6 +7,7 @@ pub mod pch;
 pub mod sanitize;
 
 use self::logger::ProgramError;
+use crate::analysis::constraint::inter::ExecRec;
 use crate::ast::utils::show_cmd_args;
 use crate::config::{get_config, get_func_pass_lib_dir, get_minimize_compile_flag};
 use crate::deopt::utils::{
@@ -457,11 +458,7 @@ impl Executor {
 
     fn setup_exec_msg_dir(fuzzer: &Path) -> Result<(PathBuf, PathBuf)> {
         let work_dir = get_file_parent_dir(fuzzer);
-
-        let func_sta_dir = Deopt::get_func_stack_dir(work_dir)?;
-        let exec_cov_dir = Deopt::get_exec_cov_dir(work_dir)?;
-
-        Ok((func_sta_dir, exec_cov_dir))
+        ExecRec::setup_exec_dir(work_dir)
     }
 
     pub fn execute_cov_fuzzer_pool(
