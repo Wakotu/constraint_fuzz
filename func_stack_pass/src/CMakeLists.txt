@@ -13,8 +13,8 @@ add_definitions("${LLVM_DEFINITIONS}")
 
 install(TARGETS "${FSP_PLUGIN_LIB}" DESTINATION "${FSP_NAME}")
 add_subdirectory(utils)
-add_subdirectory(func_stack)
+add_subdirectory(runtime)
 
 target_link_libraries("${FSP_IMPL_LIB}" PUBLIC utils)
-# target_link_libraries("${FSP_PLUGIN_LIB}" PUBLIC utils)
+target_link_libraries("${FSP_PLUGIN_LIB}" PUBLIC utils)
 
