@@ -1,6 +1,8 @@
 #ifndef _UTILS_H
 #define _UTILS_H
 
+// #include "llvm-19/llvm/Support/raw_os_ostream.h"
+#include "llvm/Support/raw_ostream.h"
 #include <optional>
 #include <ostream>
 #include <string>
@@ -17,7 +19,39 @@ struct SrcLoc {
       : src_path(path), line(line), col(col) {}
   bool is_valid() const;
   friend std::ostream &operator<<(std::ostream &os, const SrcLoc &loc);
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                       const SrcLoc &loc);
 };
+
+inline std::ostream &operator<<(std::ostream &os, const SrcLoc &loc) {
+  if (loc.is_valid()) {
+    os << loc.src_path;
+    if (loc.line.has_value()) {
+      os << ":" << loc.line.value();
+      if (loc.col.has_value()) {
+        os << ":" << loc.col.value();
+      }
+    }
+  } else {
+    os << "Invalid SrcLoc";
+  }
+  return os;
+}
+
+inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SrcLoc &loc) {
+  if (loc.is_valid()) {
+    os << loc.src_path;
+    if (loc.line.has_value()) {
+      os << ":" << loc.line.value();
+      if (loc.col.has_value()) {
+        os << ":" << loc.col.value();
+      }
+    }
+  } else {
+    os << "Invalid SrcLoc";
+  }
+  return os;
+}
 
 // define hash specialization for SrcLoc
 namespace std {
@@ -40,20 +74,5 @@ template <> struct hash<SrcLoc> {
   }
 };
 } // namespace std
-
-inline std::ostream &operator<<(std::ostream &os, const SrcLoc &loc) {
-  if (loc.is_valid()) {
-    os << loc.src_path;
-    if (loc.line.has_value()) {
-      os << ":" << loc.line.value();
-      if (loc.col.has_value()) {
-        os << ":" << loc.col.value();
-      }
-    }
-  } else {
-    os << "Invalid SrcLoc";
-  }
-  return os;
-}
 
 #endif // !DEBUG

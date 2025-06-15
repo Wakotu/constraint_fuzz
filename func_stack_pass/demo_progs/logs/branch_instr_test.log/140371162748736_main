@@ -1,0 +1,19 @@
+enter main
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:7:7 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:12:18
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:38
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:15:29
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:38
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:15:29
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:38
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:15:29
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:38
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:15:29
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 1 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:38
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:35 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:14:3 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:19:11
+Branch Guard: /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:19:3 0 /struct_fuzz/func_stack_pass/demo_progs/branch_instr_test.c:27:59
+return from main

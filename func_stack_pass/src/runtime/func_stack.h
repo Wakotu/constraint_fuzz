@@ -9,6 +9,7 @@ extern "C" {
 void pop_func(const char *func_name);
 
 void push_func(const char *func_name);
+void print_rec_to_file(const char *rec);
 
 #ifdef __cplusplus
 }

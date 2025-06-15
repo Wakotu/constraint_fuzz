@@ -1,5 +1,6 @@
 #include "plugin.h"
 #include "utils.h"
+#include <iostream>
 #include <llvm-19/llvm/ADT/StringRef.h>
 #include <optional>
 #include <sstream>
@@ -124,7 +125,35 @@ bool insert_func(Module &m, ModuleAnalysisManager &mam) {
   return true;
 }
 
-SrcLoc get_src_loc(Instruction *inst, StringRef src_path) {
+std::string get_src_path(Module &M) {
+  std::string rela_path = M.getSourceFileName();
+  llvm::SmallString<256> abs_path(rela_path); // Choose a reasonable size
+
+  // Attempt to make it an absolute path
+  // Option 1: make_absolute (might not resolve '..' components)
+  auto err_code = llvm::sys::fs::make_absolute(abs_path);
+  if (err_code) {
+    errs() << RED << "[Error] " << RESET
+           << "Failed to make absolute path: " << err_code.message() << "\n";
+  }
+  return abs_path.str().str();
+}
+
+SrcLoc get_src_loc(Instruction *inst, Module &M) {
+  std::string src_path = get_src_path(M);
+  SrcLoc loc;
+  loc.src_path = src_path;
+  const DebugLoc &debug_loc = inst->getDebugLoc();
+  if (debug_loc) {
+    loc.line = debug_loc.getLine();
+    loc.col = debug_loc.getCol();
+  } else {
+    loc.line = std::nullopt;
+    loc.col = std::nullopt;
+  }
+  return loc;
+}
+SrcLoc get_src_loc_with_path(Instruction *inst, StringRef src_path) {
   SrcLoc loc;
   loc.src_path = src_path;
   const DebugLoc &debug_loc = inst->getDebugLoc();
@@ -151,32 +180,18 @@ FunctionCallee get_rec_log_func_decl(Module &m) {
   return rec_log_func_cl;
 }
 
-std::string get_src_path(Module &M) {
-  std::string rela_path = M.getSourceFileName();
-  llvm::SmallString<256> abs_path(rela_path); // Choose a reasonable size
-
-  // Attempt to make it an absolute path
-  // Option 1: make_absolute (might not resolve '..' components)
-  auto err_code = llvm::sys::fs::make_absolute(abs_path);
-  if (err_code) {
-    errs() << RED << "[Error] " << RESET
-           << "Failed to make absolute path: " << err_code.message() << "\n";
-  }
-  return abs_path.str().str();
-}
-
 void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
                              BasicBlock *dest, bool br_val) {
   // collect message: br src location , dest src location
   std::string src_path = get_src_path(M);
-  SrcLoc br_loc = get_src_loc(cond_inst, src_path);
+  SrcLoc br_loc = get_src_loc_with_path(cond_inst, src_path);
   if (!br_loc.is_valid()) {
     errs() << RED << "[Error] " << RESET
            << "Conditional instruction has no debug location.\n";
     return;
   }
   Instruction *dest_inst = dest->getFirstNonPHI();
-  SrcLoc dest_loc = get_src_loc(dest_inst, src_path);
+  SrcLoc dest_loc = get_src_loc_with_path(dest_inst, src_path);
   if (!dest_loc.is_valid()) {
     errs() << RED << "[Error] " << RESET
            << "Destination block has no debug location.\n";
@@ -185,7 +200,7 @@ void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
 
   // format rec message
   std::stringstream ss;
-  ss << "Selection: " << br_loc << " " << br_val << " " << dest_loc;
+  ss << "Branch Guard: " << br_loc << " " << br_val << " " << dest_loc;
   std::string rec = ss.str();
 
   // add declaration of logging function
@@ -200,6 +215,10 @@ void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
 bool instr_br_inst(Instruction *term, Module &M) {
   if (BranchInst *br_inst = dyn_cast<BranchInst>(term)) {
     if (br_inst->isConditional()) {
+
+      SrcLoc br_loc = get_src_loc(br_inst, M);
+      errs() << BLUE << "[Br Instrument] " << RESET
+             << "Branch Location: " << br_loc << "\n";
       // locate a conditional br instruction
       BasicBlock *true_dest = br_inst->getSuccessor(0);
       BasicBlock *false_dest = br_inst->getSuccessor(1);
@@ -214,6 +233,11 @@ bool instr_br_inst(Instruction *term, Module &M) {
 bool instr_switch_inst(Instruction *term, Module &M) {
   if (SwitchInst *switch_inst = dyn_cast<SwitchInst>(term)) {
     // locate a switch instruction
+    SrcLoc switch_loc = get_src_loc(switch_inst, M);
+    errs() << BLUE << "[Switch Instrument] " << RESET
+           << "Switch Location: " << switch_loc << "\n";
+    BasicBlock *default_dest = switch_inst->getDefaultDest();
+    instr_branch_dest_guard(M, switch_inst, default_dest, false);
     for (auto case_it = switch_inst->case_begin();
          case_it != switch_inst->case_end(); ++case_it) {
       BasicBlock *dest = case_it->getCaseSuccessor();
@@ -227,6 +251,9 @@ bool instr_switch_inst(Instruction *term, Module &M) {
 bool instr_indirectbr_inst(Instruction *term, Module &M) {
   if (IndirectBrInst *indirect_br_inst = dyn_cast<IndirectBrInst>(term)) {
     // locate an indirect br instruction
+    SrcLoc indirect_br_loc = get_src_loc(indirect_br_inst, M);
+    errs() << BLUE << "[IndirectBr Instrument] " << RESET
+           << "Indirect Branch Location: " << indirect_br_loc << "\n";
     for (BasicBlock *dest : indirect_br_inst->successors()) {
       instr_branch_dest_guard(M, indirect_br_inst, dest, true);
     }

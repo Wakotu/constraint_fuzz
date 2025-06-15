@@ -223,8 +223,19 @@ impl CCArgs {
         Ok(())
     }
 
+    fn add_debug_flag(&mut self) -> Result<()> {
+        for arg in self.args.iter() {
+            if arg == "-g" {
+                return Ok(());
+            }
+        }
+        self.append_arg("-g".to_owned());
+        Ok(())
+    }
+
     pub fn transform(&mut self) -> Result<()> {
         self.cc_subst()?;
+        self.add_debug_flag()?;
         self.add_plugin_flags()?;
         self.add_link_flags()?;
         self.add_std_cxx_link_flag()?;
