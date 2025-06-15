@@ -369,6 +369,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "constraint_fuzz"
+version = "0.1.0"
+dependencies = [
+ "async-openai",
+ "base64 0.21.7",
+ "chrono",
+ "clang-ast",
+ "clap",
+ "color-eyre",
+ "colored",
+ "derive_builder",
+ "eyre",
+ "flexi_logger 0.25.6",
+ "log",
+ "md5",
+ "num_cpus",
+ "once_cell",
+ "paste",
+ "petgraph",
+ "plotters",
+ "rand",
+ "rayon",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "serde_yaml",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "thiserror 1.0.69",
+ "threadpool",
+ "tiktoken-rs",
+ "tokio",
+ "wait-timeout",
+ "walkdir",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2324,46 +2364,6 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
-name = "struct_fuzz"
-version = "0.1.0"
-dependencies = [
- "async-openai",
- "base64 0.21.7",
- "chrono",
- "clang-ast",
- "clap",
- "color-eyre",
- "colored",
- "derive_builder",
- "eyre",
- "flexi_logger 0.25.6",
- "log",
- "md5",
- "num_cpus",
- "once_cell",
- "paste",
- "petgraph",
- "plotters",
- "rand",
- "rayon",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_with",
- "serde_yaml",
- "strum",
- "strum_macros",
- "tempfile",
- "thiserror 1.0.69",
- "threadpool",
- "tiktoken-rs",
- "tokio",
- "wait-timeout",
- "walkdir",
-]
 
 [[package]]
 name = "strum"

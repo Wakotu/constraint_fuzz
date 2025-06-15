@@ -366,8 +366,8 @@ mod tests {
 
     fn setup_test_consdf_builder() -> Result<ConsDFBuilder> {
         let work_dir =
-            "/struct_fuzz/struct_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49";
-        let json_slice = buffer_read_to_bytes("/struct_fuzz/struct_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49/constraints.json");
+            "/constraint_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49";
+        let json_slice = buffer_read_to_bytes("/constraint_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49/constraints.json");
         let cons_list: Vec<Constraint> = serde_json::from_slice(&json_slice?)?;
         let builder = ConsDFBuilder::new(&cons_list[0], work_dir);
         Ok(builder)

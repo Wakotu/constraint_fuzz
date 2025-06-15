@@ -1,6 +1,6 @@
 #!/bin/bash
 
-dest_dir="./struct_fuzz"
+dest_dir="./constraint_fuzz"
 self_file="./refrac.sh"
 git_dir='./.git'
 

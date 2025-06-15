@@ -1,5 +1,5 @@
 use color_eyre::eyre::Result;
-use struct_fuzz::{
+use constraint_fuzz::{
     config::{self, get_config},
     fuzzer::Fuzzer,
     init_logger,

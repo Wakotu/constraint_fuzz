@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
-use plotters::prelude::*;
-use struct_fuzz::{
+use constraint_fuzz::{
     deopt::{self, Deopt},
     execution::Executor,
     program::Program,
 };
+use plotters::prelude::*;
 
 fn get_bench_dir() -> Result<PathBuf> {
     let crate_dir = crate::Deopt::get_crate_dir()?;
@@ -135,7 +135,7 @@ impl<'a> BranchCounter<'a> {
 
 fn collect_accumulation_coverage(deopt: &Deopt, is_rand_bench: bool) -> Result<()> {
     let succ_seed_dir = deopt.get_library_succ_seed_dir()?;
-    let succ_seeds = struct_fuzz::deopt::utils::read_sort_dir(&succ_seed_dir)?;
+    let succ_seeds = constraint_fuzz::deopt::utils::read_sort_dir(&succ_seed_dir)?;
     let mut last_seed_id = 0;
     let mut last_seed_coverage = 0;
     let mut counter = BranchCounter::new(deopt);
@@ -267,7 +267,7 @@ fn coverage(project: &'static str, kind: &ACCKind, is_rand_bench: bool) -> Resul
 
 fn main() -> Result<()> {
     let config = Config::parse();
-    struct_fuzz::config::Config::init_test(&config.project);
+    constraint_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());
 
     match &config.command {
