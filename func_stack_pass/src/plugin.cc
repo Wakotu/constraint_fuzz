@@ -165,14 +165,14 @@ std::string get_src_path(Module &M) {
   return abs_path.str().str();
 }
 
-void insert_sel_dest_guard(Module &M, BranchInst *br, BasicBlock *dest,
-                           bool br_val) {
+void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
+                             BasicBlock *dest, bool br_val) {
   // collect message: br src location , dest src location
   std::string src_path = get_src_path(M);
-  SrcLoc br_loc = get_src_loc(br, src_path);
+  SrcLoc br_loc = get_src_loc(cond_inst, src_path);
   if (!br_loc.is_valid()) {
     errs() << RED << "[Error] " << RESET
-           << "Branch instruction has no debug location.\n";
+           << "Conditional instruction has no debug location.\n";
     return;
   }
   Instruction *dest_inst = dest->getFirstNonPHI();
@@ -197,30 +197,59 @@ void insert_sel_dest_guard(Module &M, BranchInst *br, BasicBlock *dest,
   irb.CreateCall(rec_log_func_cl, {rec_str_ptr});
 }
 
-bool insert_selection(Module &m, ModuleAnalysisManager &mam) {
+bool instr_br_inst(Instruction *term, Module &M) {
+  if (BranchInst *br_inst = dyn_cast<BranchInst>(term)) {
+    if (br_inst->isConditional()) {
+      // locate a conditional br instruction
+      BasicBlock *true_dest = br_inst->getSuccessor(0);
+      BasicBlock *false_dest = br_inst->getSuccessor(1);
+      instr_branch_dest_guard(M, br_inst, true_dest, true);
+      instr_branch_dest_guard(M, br_inst, false_dest, false);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool instr_switch_inst(Instruction *term, Module &M) {
+  if (SwitchInst *switch_inst = dyn_cast<SwitchInst>(term)) {
+    // locate a switch instruction
+    for (auto case_it = switch_inst->case_begin();
+         case_it != switch_inst->case_end(); ++case_it) {
+      BasicBlock *dest = case_it->getCaseSuccessor();
+      instr_branch_dest_guard(M, switch_inst, dest, true);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool instr_indirectbr_inst(Instruction *term, Module &M) {
+  if (IndirectBrInst *indirect_br_inst = dyn_cast<IndirectBrInst>(term)) {
+    // locate an indirect br instruction
+    for (BasicBlock *dest : indirect_br_inst->successors()) {
+      instr_branch_dest_guard(M, indirect_br_inst, dest, true);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool insert_branches(Module &m, ModuleAnalysisManager &mam) {
   bool flag = false;
   for (Function &F : m) {
     for (auto &BB : F) {
       Instruction *term = BB.getTerminator();
-      if (BranchInst *br_inst = dyn_cast<BranchInst>(term)) {
-        if (br_inst->isConditional()) {
-          // locate a conditional br instruction
-          flag = true;
-          // insert at each destination
-          BasicBlock *true_dest = br_inst->getSuccessor(0);
-          BasicBlock *false_dest = br_inst->getSuccessor(1);
-          insert_sel_dest_guard(m, br_inst, true_dest, true);
-          insert_sel_dest_guard(m, br_inst, false_dest, false);
-        }
-      }
+      flag |= instr_br_inst(term, m);
+      flag |= instr_switch_inst(term, m);
+      flag |= instr_indirectbr_inst(term, m);
     }
   }
   return flag;
 }
 
-bool insert_loop(Module &m, ModuleAnalysisManager &mam) {
-  // TODO: Recognize Loop Structure
-}
+// bool insert_loop(Module &m, ModuleAnalysisManager &mam) {
+// }
 
 bool MyPass::runOnModule(Module &m, ModuleAnalysisManager &mam) {
   // auto printf_cl = add_printf_decl(m);
@@ -228,8 +257,7 @@ bool MyPass::runOnModule(Module &m, ModuleAnalysisManager &mam) {
   bool flag = false;
 
   flag |= insert_func(m, mam);
-  flag |= insert_selection(m, mam);
-  flag |= insert_loop(m, mam);
+  flag |= insert_branches(m, mam);
   return flag;
 }
 

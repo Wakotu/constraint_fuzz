@@ -134,24 +134,24 @@ void print_rec_to_file(const char *rec) {
   out << rec << "\n";
 }
 
-static std::unordered_map<std::size_t, unsigned int> loop_counter;
+// static std::unordered_map<std::size_t, unsigned int> loop_counter;
 
-unsigned int get_loop_count(const SrcLoc &loc) {
-  size_t hash = std::hash<SrcLoc>()(loc);
-  auto it = loop_counter.find(hash);
-  if (it != loop_counter.end()) {
-    return ++it->second;
-  } else {
-    loop_counter[hash] = 1;
-    return 1;
-  }
-}
+// unsigned int get_loop_count(const SrcLoc &loc) {
+//   size_t hash = std::hash<SrcLoc>()(loc);
+//   auto it = loop_counter.find(hash);
+//   if (it != loop_counter.end()) {
+//     return ++it->second;
+//   } else {
+//     loop_counter[hash] = 1;
+//     return 1;
+//   }
+// }
 
-void record_loop(const char *src_path, unsigned int line, unsigned int col) {
-  SrcLoc loc(src_path, line, col);
-  auto count = get_loop_count(loc);
+// void record_loop(const char *src_path, unsigned int line, unsigned int col) {
+//   SrcLoc loc(src_path, line, col);
+//   auto count = get_loop_count(loc);
 
-  std::stringstream ss;
-  ss << "Loop: " << loc << " " << count;
-  print_rec_to_file(ss.str().c_str());
-}
+//   std::stringstream ss;
+//   ss << "Loop: " << loc << " " << count;
+//   print_rec_to_file(ss.str().c_str());
+// }
