@@ -33,7 +33,7 @@ inline std::ostream &operator<<(std::ostream &os, const SrcLoc &loc) {
       }
     }
   } else {
-    os << "Invalid SrcLoc";
+    os << "NullLoc";
   }
   return os;
 }
@@ -48,7 +48,7 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SrcLoc &loc) {
       }
     }
   } else {
-    os << "Invalid SrcLoc";
+    os << "NullLoc";
   }
   return os;
 }

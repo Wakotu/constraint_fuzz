@@ -188,14 +188,14 @@ void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
   if (!br_loc.is_valid()) {
     errs() << RED << "[Error] " << RESET
            << "Conditional instruction has no debug location.\n";
-    return;
+    // return;
   }
   Instruction *dest_inst = dest->getFirstNonPHI();
   SrcLoc dest_loc = get_src_loc_with_path(dest_inst, src_path);
   if (!dest_loc.is_valid()) {
     errs() << RED << "[Error] " << RESET
            << "Destination block has no debug location.\n";
-    return;
+    // return;
   }
 
   // format rec message
