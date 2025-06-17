@@ -17,6 +17,8 @@ use deopt::Deopt;
 use flexi_logger::{opt_format, FileSpec, Naming};
 use once_cell::sync::OnceCell;
 
+use crate::config::Config;
+
 #[macro_use]
 extern crate derive_builder;
 
@@ -58,6 +60,13 @@ fn my_format(
         level,
         record.args()
     )?;
+    Ok(())
+}
+
+pub fn setup_test_run_entry() -> Result<()> {
+    // defaults to libaom as test
+    Config::init_test("libaom");
+    color_eyre::install()?;
     Ok(())
 }
 

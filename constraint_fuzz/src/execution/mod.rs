@@ -957,6 +957,11 @@ fn parse_cov_from_log(log_file: &Path) -> eyre::Result<Option<usize>> {
 }
 
 pub fn max_cpu_count() -> usize {
+    // let max_cores = if get_test_flag() {
+    //     0
+    // } else {
+    //     get_config().max_cores
+    // };
     let max_cores = get_config().max_cores;
     let cpu_count = num_cpus::get() - 1;
     if max_cores >= cpu_count || max_cores == 0 {

@@ -11,14 +11,22 @@ function download() {
   if [[ ! -z "${DOCKER_CONTAINER:-}" ]]; then
     apt-get update && apt-get install -y cmake yasm wget
   fi
-  cd $SRC
-  if [ -x "$(command -v coscli)" ]; then
-    coscli cp cos://sbd-testing-1251316161/bench_archive/LLM_FUZZ/archives/aom.tar.gz aom.tar.gz
-    tar -xvf aom.tar.gz && rm aom.tar.gz
-  else
-    git clone --depth 1 https://aomedia.googlesource.com/aom
+  # download part 
+  cd $PERSIS_SRC_DIR
+  if [[ ! -d ${PROJECT_NAME} ]]; then
+    blue_echo "Downloading ${PROJECT_NAME}..."
+    if [ -x "$(command -v coscli)" ]; then
+      coscli cp cos://sbd-testing-1251316161/bench_archive/LLM_FUZZ/archives/aom.tar.gz aom.tar.gz
+      tar -xvf aom.tar.gz && rm aom.tar.gz
+    else
+      git clone --depth 1 https://aomedia.googlesource.com/aom
+    fi
+    mv aom ${PROJECT_NAME}
   fi
-  mv aom ${PROJECT_NAME}
+  
+  # copy part
+  blue_echo "Copying ${PROJECT_NAME} to ${SRC}..."
+  cp -r $PROJECT_NAME $SRC
 }
 
 function build_lib() {

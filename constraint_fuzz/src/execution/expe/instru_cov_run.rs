@@ -59,8 +59,10 @@ impl Executor {
         fuzzer_src: &Path,
     ) -> Result<()> {
         let work_dir = get_file_parent_dir(cov_fuzzer);
+        // cov run and get profdata
         let profdata = self.get_cov_profdata(cov_fuzzer, corpus_dirs)?;
 
+        // collect contraints from cov data
         let cov = self.get_code_cov_from_profdata(cov_fuzzer, fuzzer_src, &profdata)?;
         self.extract_cons_from_cov(cov, work_dir)?;
         Ok(())

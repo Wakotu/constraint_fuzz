@@ -194,6 +194,7 @@ pub fn parse_config() -> Result<()> {
     Ok(())
 }
 
+
 use clap::{Parser, ValueEnum};
 
 use crate::Deopt;
@@ -415,3 +416,17 @@ pub fn get_complete_gen_tempate() -> &'static str {
     pub static GTEMPLATE: OnceCell<String> = OnceCell::new();
     GTEMPLATE.get_or_init(|| CODEX_GEN_TEMPLATE.replace("{project}", &config.target))
 }
+
+
+// create a test flag global variable
+// static mut TEST_FLAG: bool = false;
+
+// pub fn set_test_flag() {
+//     unsafe {
+//         TEST_FLAG = true;
+//     }
+// }
+
+// pub fn get_test_flag() -> bool {
+//     unsafe { TEST_FLAG }
+// }

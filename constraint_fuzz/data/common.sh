@@ -11,6 +11,12 @@ function blue_echo() {
 
 function init() {
   mkdir -p ../../output/build
+  PERSIS_PROJ_DIR=$(realpath ../../output/$PROJECT_NAME)
+  PERSIS_SRC_DIR=${PERSIS_PROJ_DIR}/src
+  if [[ ! -d $PERSIS_SRC_DIR ]]; then
+    mkdir -p $PERSIS_SRC_DIR
+  fi
+
   OUTPUT=$(realpath ../../output/build)
   LIB_BUILD=${OUTPUT}/${PROJECT_NAME}
   rm -rf $LIB_BUILD

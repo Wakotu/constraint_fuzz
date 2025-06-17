@@ -140,7 +140,8 @@ impl Executor {
         Ok(())
     }
 
-    pub fn run_expe(&self, program_path: &Path) -> Result<()> {
+    pub fn run_expe<P: AsRef<Path>>(&self, program_path: P) -> Result<()> {
+        let program_path = program_path.as_ref();
         let work_dir = self.deopt.get_expe_work_dir(program_path)?;
         let expe_corpus = self.deopt.get_expe_corpus_dir(&work_dir)?;
         let lib_corpus = self.deopt.get_library_build_corpus_dir()?;
@@ -150,6 +151,21 @@ impl Executor {
         self.build_expe_fuzzer(program_path, &work_dir)?;
         self.run_expe_fuzzer(&work_dir, &corpus_list)?;
         self.expe_cov_collect(program_path, &work_dir, &corpus_list)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{deopt::Deopt, setup_test_run_entry};
+
+    #[test]
+    fn test_expe_cov_collect() -> Result<()> {
+        setup_test_run_entry()?;
+        let deopt = Deopt::new("libaom")?;
+        let executor = Executor::new(&deopt)?;
+        executor.run_expe("/struct_fuzz/constraint_fuzz/examples/libaom/example_fuzzer.cc")?;
         Ok(())
     }
 }
