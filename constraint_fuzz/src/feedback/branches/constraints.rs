@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    config::get_config,
     execution::max_cpu_count,
     feedback::clang_coverage::{
         get_cov_region_fileid, BranchCount, CodeCoverage, CovBranch, CovFunction, CovRegion,
@@ -347,11 +348,16 @@ impl CovFunction {
             let mac_text = self.get_region_text(mac_rgn)?;
             let expd_text = self.get_region_text(&expd_rgn)?;
 
-            #[cfg(debug_assertions)]
-            {
+            let debug_mode = get_config().debug_mode;
+            if debug_mode.is_some_and(|d| d) {
                 self.show_region_debug_info(mac_rgn, "macro", &mac_text)?;
                 self.show_region_debug_info(&expd_rgn, "expanded", &expd_text)?;
             }
+            // #[cfg(debug_assertions)]
+            // {
+            //     self.show_region_debug_info(mac_rgn, "macro", &mac_text)?;
+            //     self.show_region_debug_info(&expd_rgn, "expanded", &expd_text)?;
+            // }
 
             mac_mapping.insert(mac_text, expd_text);
         }

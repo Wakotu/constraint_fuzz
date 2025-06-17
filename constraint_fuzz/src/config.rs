@@ -195,7 +195,7 @@ pub fn parse_config() -> Result<()> {
 }
 
 
-use clap::{Parser, ValueEnum};
+use clap::{builder::Str, Parser, ValueEnum};
 
 use crate::Deopt;
 /// Simple program to greet a person
@@ -204,6 +204,8 @@ use crate::Deopt;
 pub struct Config {
     /// The target project you decide to fuzz. Available: ["cJSON", "c-ares", "libvpx", "libaom", "libpng", "cre2", "curl", "lcms", "libjpeg-turbo", "libmagic", "libtiff", "sqlite3", "zlib", "libpcap"]
     pub target: String,
+    /// If run in debug mode, more debug information will be printed.
+    pub debug_mode: Option<bool>, 
     /// Generative model to generate codes.
     #[arg(short, long, default_value = "chat-gpt")]
     pub generative: LLMModel,
@@ -248,6 +250,7 @@ impl Config {
     pub fn init_test(target: &str) {
         let config = Config {
             target: target.to_string(),
+            debug_mode: Some(false),
             generative: LLMModel::ChatGPT,
             infill: LLMModel::ChatGPT,
             n_sample: 10,

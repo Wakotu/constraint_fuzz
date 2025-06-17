@@ -1,4 +1,8 @@
-use std::{fs::File, io::BufWriter, path::Path};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     deopt::utils::{get_file_dirname, get_formatted_time},
@@ -83,19 +87,19 @@ impl Executor {
     //     Ok(())
     // }
 
-    fn show_each_cons(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
-        let show_dir = self.deopt.get_expe_constraints_show_dir(work_dir)?;
-        for cons in cons_list {
-            let fname = cons.get_show_filename()?;
-            let fpath = show_dir.join(&fname);
-            // log::debug!("cons fpath: {:?}", fpath);
-            let content = cons.get_show_content()?;
-            Deopt::write_wtih_buffer(&fpath, content.as_bytes())?;
-        }
-        Ok(())
-    }
+    // fn show_each_cons(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
+    //     let show_dir = self.deopt.get_expe_constraints_show_dir(work_dir)?;
+    //     for cons in cons_list {
+    //         let fname = cons.get_show_filename()?;
+    //         let fpath = show_dir.join(&fname);
+    //         // log::debug!("cons fpath: {:?}", fpath);
+    //         let content = cons.get_show_content()?;
+    //         Deopt::write_wtih_buffer(&fpath, content.as_bytes())?;
+    //     }
+    //     Ok(())
+    // }
 
-    fn save_cons_list(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<()> {
+    fn save_cons_list(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<PathBuf> {
         let fpath = self.deopt.get_constraints_path(work_dir);
         let file = File::create(&fpath)?;
         // let mut writer = BufWriter::new(file);
@@ -106,17 +110,17 @@ impl Executor {
 
         serde_json::to_writer(writer, cons_list)?;
 
-        Ok(())
+        Ok(fpath)
     }
 
     // program path is arbitrary
-    pub fn expe_cov_collect(
+    pub fn cov_procedure(
         &self,
         program_path: &Path,
         work_dir: &Path,
         corpus_dirs: &[&Path],
     ) -> Result<()> {
-        log::trace!("expe cov build: {program_path:?}");
+        log::info!("Expe cov procedure started");
         let time_logger = TimeUsage::new(work_dir.to_owned());
 
         // build cov_fuzzer
@@ -140,7 +144,20 @@ impl Executor {
         Ok(())
     }
 
+    fn fuzzer_procedure(
+        &self,
+        program_path: &Path,
+        work_dir: &Path,
+        corpus_list: &[&Path],
+    ) -> Result<()> {
+        log::info!("Expe fuzzer procedure started");
+        self.build_expe_fuzzer(program_path, &work_dir)?;
+        self.run_expe_fuzzer(&work_dir, &corpus_list)?;
+        Ok(())
+    }
+
     pub fn run_expe<P: AsRef<Path>>(&self, program_path: P) -> Result<()> {
+        log::info!("Expe run started");
         let program_path = program_path.as_ref();
         let work_dir = self.deopt.get_expe_work_dir(program_path)?;
         let expe_corpus = self.deopt.get_expe_corpus_dir(&work_dir)?;
@@ -148,9 +165,8 @@ impl Executor {
         let shared_corpus = self.deopt.get_library_shared_corpus_dir()?;
         let corpus_list: [&Path; 3] = [&expe_corpus, &lib_corpus, &shared_corpus];
 
-        self.build_expe_fuzzer(program_path, &work_dir)?;
-        self.run_expe_fuzzer(&work_dir, &corpus_list)?;
-        self.expe_cov_collect(program_path, &work_dir, &corpus_list)?;
+        self.fuzzer_procedure(program_path, &work_dir, &corpus_list)?;
+        self.cov_procedure(program_path, &work_dir, &corpus_list)?;
         Ok(())
     }
 }
@@ -162,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_expe_cov_collect() -> Result<()> {
-        setup_test_run_entry()?;
+        setup_test_run_entry("libaom")?;
         let deopt = Deopt::new("libaom")?;
         let executor = Executor::new(&deopt)?;
         executor.run_expe("/struct_fuzz/constraint_fuzz/examples/libaom/example_fuzzer.cc")?;

@@ -354,14 +354,14 @@ fn run_expe(project: &'static str, program: &Path) -> Result<()> {
     Ok(())
 }
 
-fn get_config() -> &'static Config {
+fn get_harn_config() -> &'static Config {
     static CONFIG: OnceLock<Config> = OnceLock::new();
     CONFIG.get_or_init(Config::parse)
 }
 
 fn main() -> Result<ExitCode> {
     color_eyre::install()?;
-    let config = get_config();
+    let config = get_harn_config();
     check_data_dir(&config.project)?;
     constraint_fuzz::config::Config::init_test(&config.project);
     let project: &'static str = Box::leak(config.project.clone().into_boxed_str());

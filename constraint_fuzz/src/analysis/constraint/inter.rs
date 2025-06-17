@@ -36,14 +36,14 @@ pub type FuncChain = Vec<String>;
 pub struct ExecRec {
     exec_name: String,
     // func stack path
-    fs_dir: PathBuf,
+    fbs_dir: PathBuf,
     cov_path: PathBuf,
 }
 
 impl ExecRec {
     // based on expe pipeline
     pub fn get_exec_msg_dir(work_dir: &Path) -> Result<PathBuf> {
-        let msg_dir = work_dir.join("exec_msg");
+        let msg_dir = work_dir.join("exec_recs");
         create_dir_if_nonexist(&msg_dir)?;
         Ok(msg_dir)
     }
@@ -59,7 +59,7 @@ impl ExecRec {
     // based on the exec object
     pub fn get_func_stack_dir(work_dir: &Path) -> Result<PathBuf> {
         let msg_dir = Self::get_exec_msg_dir(work_dir)?;
-        let fs_dir = msg_dir.join("func_stack");
+        let fs_dir = msg_dir.join("func_br_stack");
         create_dir_if_nonexist(&fs_dir)?;
         Ok(fs_dir)
     }
@@ -98,7 +98,7 @@ impl ExecRec {
 
         Ok(Self {
             exec_name,
-            fs_dir,
+            fbs_dir: fs_dir,
             cov_path: cov_path.to_owned(),
         })
     }
@@ -116,7 +116,7 @@ impl ExecRec {
 
         Ok(Self {
             exec_name,
-            fs_dir: fs_dir.to_owned(),
+            fbs_dir: fs_dir.to_owned(),
             cov_path,
         })
     }
@@ -314,7 +314,7 @@ impl ConsDFBuilder {
     /// exec -> threads -> func stack list -> func chain list
     pub fn extract_func_chain(&self, exec: &ExecRec) -> Result<Vec<FuncChain>> {
         let mut chain_list = vec![];
-        for ent_res in fs::read_dir(&exec.fs_dir)? {
+        for ent_res in fs::read_dir(&exec.fbs_dir)? {
             let entry = ent_res?;
             let fs_path = entry.path();
             assert!(fs_path.is_file(), "Expected a file: {}", fs_path.display());

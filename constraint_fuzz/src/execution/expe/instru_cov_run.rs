@@ -20,9 +20,9 @@ impl Executor {
     ) -> Result<Vec<Constraint>> {
         // analysis for unselected branches
         let cons_list = cov.collect_rev_constraints_from_cov_by_pool()?;
-        self.save_cons_list(&cons_list, work_dir)?;
+        let fpath = self.save_cons_list(&cons_list, work_dir)?;
         // self.show_each_cons(&cons_list, work_dir)?;
-        log::debug!("Constraint Extraction done");
+        log::info!("Constraint Extraction done. Saved to {:?}", fpath);
         Ok(cons_list)
     }
 
