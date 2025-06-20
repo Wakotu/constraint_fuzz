@@ -1,5 +1,6 @@
 #include "plugin.h"
 #include "utils.h"
+#include <cassert>
 #include <iostream>
 #include <llvm-19/llvm/ADT/StringRef.h>
 #include <optional>
@@ -181,7 +182,7 @@ FunctionCallee get_rec_log_func_decl(Module &m) {
 }
 
 void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
-                             BasicBlock *dest, bool br_val) {
+                             BasicBlock *dest, bool br_val, const char *prmpt) {
   // collect message: br src location , dest src location
   std::string src_path = get_src_path(M);
   SrcLoc br_loc = get_src_loc_with_path(cond_inst, src_path);
@@ -200,7 +201,13 @@ void instr_branch_dest_guard(Module &M, Instruction *cond_inst,
 
   // format rec message
   std::stringstream ss;
-  ss << "Branch Guard: " << br_loc << " " << br_val << " " << dest_loc;
+  ss << prmpt << ": ";
+  // if (is_switch) {
+  //   ss << "Switch Guard: ";
+  // } else {
+  //   ss << "Branch Guard: ";
+  // }
+  ss << br_loc << " " << br_val << " " << dest_loc;
   std::string rec = ss.str();
 
   // add declaration of logging function
@@ -222,8 +229,8 @@ bool instr_br_inst(Instruction *term, Module &M) {
       // locate a conditional br instruction
       BasicBlock *true_dest = br_inst->getSuccessor(0);
       BasicBlock *false_dest = br_inst->getSuccessor(1);
-      instr_branch_dest_guard(M, br_inst, true_dest, true);
-      instr_branch_dest_guard(M, br_inst, false_dest, false);
+      instr_branch_dest_guard(M, br_inst, true_dest, true, "Br Guard");
+      instr_branch_dest_guard(M, br_inst, false_dest, false, "Br Guard");
       return true;
     }
   }
@@ -237,11 +244,12 @@ bool instr_switch_inst(Instruction *term, Module &M) {
     errs() << BLUE << "[Switch Instrument] " << RESET
            << "Switch Location: " << switch_loc << "\n";
     BasicBlock *default_dest = switch_inst->getDefaultDest();
-    instr_branch_dest_guard(M, switch_inst, default_dest, false);
+    instr_branch_dest_guard(M, switch_inst, default_dest, false,
+                            "Switch Guard");
     for (auto case_it = switch_inst->case_begin();
          case_it != switch_inst->case_end(); ++case_it) {
       BasicBlock *dest = case_it->getCaseSuccessor();
-      instr_branch_dest_guard(M, switch_inst, dest, true);
+      instr_branch_dest_guard(M, switch_inst, dest, true, "Switch Guard");
     }
     return true;
   }
@@ -255,23 +263,75 @@ bool instr_indirectbr_inst(Instruction *term, Module &M) {
     errs() << BLUE << "[IndirectBr Instrument] " << RESET
            << "Indirect Branch Location: " << indirect_br_loc << "\n";
     for (BasicBlock *dest : indirect_br_inst->successors()) {
-      instr_branch_dest_guard(M, indirect_br_inst, dest, true);
+      instr_branch_dest_guard(M, indirect_br_inst, dest, true,
+                              "IndirectBr Guard");
     }
     return true;
   }
   return false;
 }
 
-bool insert_branches(Module &m, ModuleAnalysisManager &mam) {
-  bool flag = false;
-  for (Function &F : m) {
-    for (auto &BB : F) {
-      Instruction *term = BB.getTerminator();
-      flag |= instr_br_inst(term, m);
-      flag |= instr_switch_inst(term, m);
-      flag |= instr_indirectbr_inst(term, m);
+bool is_bool_value(Instruction *I) {
+  if (isa<ICmpInst>(I)) {
+    return true;
+  }
+
+  if (auto *LI = dyn_cast<LoadInst>(I)) {
+    if (LI->getType()->isIntegerTy(1)) {
+      return true;
     }
   }
+  return false;
+}
+
+bool instr_bool_value(Module &M) {
+  bool flag = false;
+  for (Function &F : M) {
+    for (auto &BB : F) {
+      for (Instruction &I : BB) {
+        if (is_bool_value(&I)) {
+
+          flag = true;
+          SrcLoc loc = get_src_loc(&I, M);
+          errs() << BLUE << "[Bool Value Instrument] " << RESET
+                 << "Boolean Value Location: " << loc << "\n";
+          // Here you can add instrumentation logic for boolean values
+
+          // construct rec string
+
+          std::stringstream ss;
+          ss << "Boolean Value: " << loc;
+          std::string rec = ss.str();
+
+          FunctionCallee rec_log_func_cl = get_rec_log_func_decl(M);
+          InstrumentationIRBuilder irb(&I);
+          // create global string
+          auto rec_str_ptr = irb.CreateGlobalStringPtr(rec);
+          // insert invocation
+          irb.CreateCall(rec_log_func_cl, {rec_str_ptr});
+        }
+      }
+    }
+  }
+  return flag;
+}
+
+/**
+  Distinguish guard with different instructions: br, switch, indirectbr
+  add bool value instrumentation
+*/
+
+bool insert_branches(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = false;
+  for (Function &F : M) {
+    for (auto &BB : F) {
+      Instruction *term = BB.getTerminator();
+      flag |= instr_br_inst(term, M);
+      flag |= instr_switch_inst(term, M);
+      flag |= instr_indirectbr_inst(term, M);
+    }
+  }
+  flag |= instr_bool_value(M);
   return flag;
 }
 

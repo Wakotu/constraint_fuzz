@@ -1,18 +1,14 @@
 use rayon::prelude::*;
+
 use std::{
     fs,
-    fs::File,
-    io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
 
 use crate::{
-    deopt::{
-        utils::{
-            buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path,
-            get_parent_dir,
-        },
-        Deopt,
+    analysis::constraint::inter::tree::FuncBrTree,
+    deopt::utils::{
+        buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path, get_parent_dir,
     },
     feedback::{
         branches::constraints::Constraint,
@@ -21,15 +17,14 @@ use crate::{
 };
 
 use color_eyre::eyre::Result;
-use eyre::bail;
 
 use super::ConsDFBuilder;
+
+pub mod tree;
 
 /**
  * This module is used to get function call chain from entry to constraints (inter-procedural analysis)
  */
-
-pub type FuncChain = Vec<String>;
 
 // Define executions as exec name + cov + func stack. (file path or value)
 #[derive(Debug, Clone)]
@@ -143,91 +138,6 @@ impl CodeCoverage {
     }
 }
 
-struct FuncStack {
-    target_func: String,
-    sta: Vec<String>,
-    fs_path: PathBuf,
-}
-
-impl FuncStack {
-    pub fn new(target_func: &str, fs_path: &Path) -> Self {
-        Self {
-            target_func: target_func.to_owned(),
-            sta: Vec::new(),
-            fs_path: fs_path.to_owned(),
-        }
-    }
-
-    fn enter(&mut self, func_name: &str) -> bool {
-        self.sta.push(func_name.to_owned());
-
-        if func_name == self.target_func {
-            return true;
-        }
-
-        false
-    }
-
-    fn return_from(&mut self, func_name: &str) -> Result<()> {
-        if self.is_empty() {
-            bail!("Attempted to return from an empty function stack");
-        }
-
-        let top_name = self.sta.last().unwrap().as_str();
-        if top_name != func_name {
-            bail!(
-                "Attempted to return from function {} but the top of the stack is {}",
-                func_name,
-                top_name
-            );
-        }
-        self.sta.pop();
-        Ok(())
-    }
-
-    fn is_empty(&self) -> bool {
-        self.sta.is_empty()
-    }
-
-    fn get_func_namne_from_line<'a>(line: &'a str, prefix: &'a str) -> Result<&'a str> {
-        if !line.starts_with(prefix) {
-            bail!("Line does not start with expected prefix: {}", line);
-        }
-
-        // extract func_name: get rid of prefix and read until char '('
-        let start = prefix.len();
-        let end = line.find('(').unwrap_or_else(|| line.len());
-        let func_name = &line[start..end];
-        Ok(func_name)
-    }
-
-    pub fn get_chain(&mut self) -> Result<FuncChain> {
-        let file = File::open(&self.fs_path)?;
-        let reader = BufReader::new(file);
-        for line_res in reader.lines() {
-            let line = line_res?;
-            if line.starts_with("enter ") {
-                let func_name = Self::get_func_namne_from_line(&line, "enter ")?;
-                let flag = self.enter(func_name);
-                if flag {
-                    return Ok(self.sta.clone());
-                }
-            } else if line.starts_with("return from ") {
-                let func_name = Self::get_func_namne_from_line(&line, "return from ")?;
-                self.return_from(func_name)?;
-            } else {
-                bail!("Unexpected line in function stack file: {}", line);
-            }
-        }
-
-        bail!(
-            "Function {} not found in stack file: {}",
-            self.target_func,
-            self.fs_path.display()
-        )
-    }
-}
-
 impl ConsDFBuilder {
     fn exec_contains_cons(
         idx: usize,
@@ -273,37 +183,37 @@ impl ConsDFBuilder {
         Ok(res_list)
     }
 
-    fn get_related_executions_with_num(&self, num: Option<usize>) -> Result<Vec<ExecRec>> {
-        let exec_list = ExecRec::get_exec_list_from_work_dir(&self.work_dir)?;
-        let mut res_list = vec![];
+    // fn get_related_executions_with_num(&self, num: Option<usize>) -> Result<Vec<ExecRec>> {
+    //     let exec_list = ExecRec::get_exec_list_from_work_dir(&self.work_dir)?;
+    //     let mut res_list = vec![];
 
-        for (idx, exec) in exec_list.iter().enumerate() {
-            log::debug!(
-                "Processing execution {}/{}: {}",
-                idx + 1,
-                exec_list.len(),
-                exec.exec_name
-            );
+    //     for (idx, exec) in exec_list.iter().enumerate() {
+    //         log::debug!(
+    //             "Processing execution {}/{}: {}",
+    //             idx + 1,
+    //             exec_list.len(),
+    //             exec.exec_name
+    //         );
 
-            let json_slice = buffer_read_to_bytes(&exec.cov_path)?;
-            let cov: CodeCoverage = serde_json::from_slice(&json_slice)?;
+    //         let json_slice = buffer_read_to_bytes(&exec.cov_path)?;
+    //         let cov: CodeCoverage = serde_json::from_slice(&json_slice)?;
 
-            if cov.contains_cons(&self.cons)? {
-                log::debug!("exec: {} related and collected", exec.exec_name);
-                res_list.push(exec.to_owned());
-            } else {
-                log::debug!("exec: {} not related", exec.exec_name);
-            }
+    //         if cov.contains_cons(&self.cons)? {
+    //             log::debug!("exec: {} related and collected", exec.exec_name);
+    //             res_list.push(exec.to_owned());
+    //         } else {
+    //             log::debug!("exec: {} not related", exec.exec_name);
+    //         }
 
-            // check len
-            if let Some(num) = num {
-                if res_list.len() >= num {
-                    break;
-                }
-            }
-        }
-        Ok(res_list)
-    }
+    //         // check len
+    //         if let Some(num) = num {
+    //             if res_list.len() >= num {
+    //                 break;
+    //             }
+    //         }
+    //     }
+    //     Ok(res_list)
+    // }
 
     // iterate over all files in the coverage directory
     // judge related based on cov and then constructs the related ones only
@@ -312,8 +222,8 @@ impl ConsDFBuilder {
     // }
 
     /// exec -> threads -> func stack list -> func chain list
-    pub fn extract_func_chain(&self, exec: &ExecRec) -> Result<Vec<FuncChain>> {
-        let mut chain_list = vec![];
+    pub fn extract_inter_proc_path_from_chain(&self, exec: &ExecRec) -> Result<Vec<FuncBrTree>> {
+        let mut tree_list: Vec<FuncBrTree> = vec![];
         for ent_res in fs::read_dir(&exec.fbs_dir)? {
             let entry = ent_res?;
             let fs_path = entry.path();
@@ -327,31 +237,32 @@ impl ConsDFBuilder {
             // }
 
             // recover the stack
-            let mut func_stack = FuncStack::new(&self.cons.get_func_name()?, &fs_path);
-            let chain = match func_stack.get_chain() {
-                Ok(chain) => chain,
-                Err(e) => {
-                    log::warn!(
-                        "Failed to get function chain for {}: {}",
-                        fs_path.display(),
-                        e
-                    );
-                    continue;
-                }
-            };
-            assert!(
-                !chain.is_empty(),
-                "Function chain is empty for exec: {}",
-                exec.exec_name
-            );
-            chain_list.push(chain);
+            // let mut func_stack = FuncBrStackBuilder::new(&self.cons.get_func_name()?, &fs_path);
+            // let chain = match func_stack.get_chain() {
+            //     Ok(chain) => chain,
+            //     Err(e) => {
+            //         log::warn!(
+            //             "Failed to get function chain for {}: {}",
+            //             fs_path.display(),
+            //             e
+            //         );
+            //         continue;
+            //     }
+            // };
+            // assert!(
+            //     !chain.is_empty(),
+            //     "Function chain is empty for exec: {}",
+            //     exec.exec_name
+            // );
+            // chain_list.push(chain);
         }
-        assert!(
-            !chain_list.is_empty(),
-            "No function chains found for exec: {}",
-            exec.exec_name
-        );
-        Ok(chain_list)
+        // assert!(
+        //     !chain_list.is_empty(),
+        //     "No function chains found for exec: {}",
+        //     exec.exec_name
+        // );
+        // Ok(chain_list)
+        todo!()
     }
 }
 
@@ -366,8 +277,9 @@ mod tests {
 
     fn setup_test_consdf_builder() -> Result<ConsDFBuilder> {
         let work_dir =
-            "/constraint_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49";
-        let json_slice = buffer_read_to_bytes("/constraint_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-05-14 00:00:49/constraints.json");
+            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-17 16:22:02";
+        let cons_path = Path::new(work_dir).join("constraints.json");
+        let json_slice = buffer_read_to_bytes(&cons_path);
         let cons_list: Vec<Constraint> = serde_json::from_slice(&json_slice?)?;
         let builder = ConsDFBuilder::new(&cons_list[0], work_dir);
         Ok(builder)
@@ -391,19 +303,20 @@ mod tests {
         let execs = builder.get_related_executions()?;
         let mut res_chain_list = vec![];
         for exec in execs {
-            let chain_list = builder.extract_func_chain(&exec)?;
+            let chain_list = builder.extract_inter_proc_path_from_chain(&exec)?;
             assert!(
                 !chain_list.is_empty(),
                 "Function chain is empty for exec: {}",
                 exec.exec_name
             );
-            log::debug!("Function chain for {}: {:?}", exec.exec_name, chain_list);
+            // log::debug!("Function chain for {}: {:?}", exec.exec_name, chain_list);
             res_chain_list.extend(chain_list);
         }
-        deduplicate_unordered(&mut res_chain_list);
+        todo!()
+        // deduplicate_unordered(&mut res_chain_list);
 
-        log::debug!("Total function chains extracted: {}", res_chain_list.len());
-        log::debug!("Function chains: {:?}", res_chain_list);
-        Ok(())
+        // log::debug!("Total function chains extracted: {}", res_chain_list.len());
+        // log::debug!("Function chains: {:?}", res_chain_list);
+        // Ok(())
     }
 }
