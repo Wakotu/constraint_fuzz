@@ -53,6 +53,13 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SrcLoc &loc) {
   return os;
 }
 
+inline bool operator==(const SrcLoc &lhs, const SrcLoc &rhs) {
+  // Compare all fields that make a SrcLoc unique
+  return lhs.src_path == rhs.src_path &&
+         lhs.line == rhs.line && // std::optional has its own operator==
+         lhs.col == rhs.col;     // std::optional has its own operator==
+}
+
 // define hash specialization for SrcLoc
 namespace std {
 template <> struct hash<SrcLoc> {

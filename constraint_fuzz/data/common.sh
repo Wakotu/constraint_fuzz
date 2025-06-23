@@ -202,7 +202,7 @@ function build_all() {
     download &&
     #build_san && \
     build_fuzzer &&
-    build_debug_fuzzer &&
+    # build_debug_fuzzer &&
     build_corpus &&
     build_dict &&
     build_cov &&

@@ -10,8 +10,24 @@ int main(int argc, char *argv[]) {
   }
 
   int num = atoi(argv[1]);
+  if (!num) {
+    fprintf(stderr, "num is not zero.\n");
+    return EXIT_FAILURE;
+  }
+
+  for (int i = 0; i < num; i++) {
+    if (i % 2 == 0) {
+      printf("Even number: %d\n", i);
+    } else {
+      printf("Odd number: %d\n", i);
+    }
+  }
+
   int i = 0;
-  while ((i * (num - i)) <= i * 2 && i * (num - i) >= 0) {
+  while ((i * (num - i)) <= i * 2 && i * (num - i) >= 0 || i < 10) {
+    if ((i > 2 && num < 5) || (i < 2 && num > 5)) {
+      printf("Condition met: i = %d, num = %d\n", i, num);
+    }
     printf("Counter: %d\n", i);
     i++;
   }
