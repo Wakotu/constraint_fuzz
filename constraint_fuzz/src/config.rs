@@ -206,6 +206,8 @@ pub struct Config {
     pub target: String,
     /// If run in debug mode, more debug information will be printed.
     pub debug_mode: Option<bool>, 
+    #[clap(default_value_t = 2)]
+    pub trunc_cnt: usize,
     /// Generative model to generate codes.
     #[arg(short, long, default_value = "chat-gpt")]
     pub generative: LLMModel,
@@ -251,6 +253,7 @@ impl Config {
         let config = Config {
             target: target.to_string(),
             debug_mode: Some(false),
+            trunc_cnt: 2,
             generative: LLMModel::ChatGPT,
             infill: LLMModel::ChatGPT,
             n_sample: 10,
@@ -418,6 +421,10 @@ pub fn get_complete_gen_tempate() -> &'static str {
     let config = get_config();
     pub static GTEMPLATE: OnceCell<String> = OnceCell::new();
     GTEMPLATE.get_or_init(|| CODEX_GEN_TEMPLATE.replace("{project}", &config.target))
+}
+
+pub fn get_trunc_cnt() -> usize {
+    get_config().trunc_cnt
 }
 
 

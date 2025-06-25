@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::tree::FuncBrTree,
+    analysis::constraint::inter::tree::ExecTree,
     deopt::utils::{
         buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path, get_parent_dir,
     },
@@ -222,8 +222,8 @@ impl ConsDFBuilder {
     // }
 
     /// exec -> threads -> func stack list -> func chain list
-    pub fn extract_inter_proc_path_from_chain(&self, exec: &ExecRec) -> Result<Vec<FuncBrTree>> {
-        let mut tree_list: Vec<FuncBrTree> = vec![];
+    pub fn extract_inter_proc_path_from_chain(&self, exec: &ExecRec) -> Result<Vec<ExecTree>> {
+        let mut tree_list: Vec<ExecTree> = vec![];
         for ent_res in fs::read_dir(&exec.fbs_dir)? {
             let entry = ent_res?;
             let fs_path = entry.path();
@@ -271,13 +271,13 @@ impl ConsDFBuilder {
  */
 #[cfg(test)]
 mod tests {
-    use crate::{deopt::utils::deduplicate_unordered, init_report_utils_for_tests};
+    use crate::init_report_utils_for_tests;
 
     use super::*;
 
     fn setup_test_consdf_builder() -> Result<ConsDFBuilder> {
         let work_dir =
-            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-17 16:22:02";
+            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-24 10:30:27";
         let cons_path = Path::new(work_dir).join("constraints.json");
         let json_slice = buffer_read_to_bytes(&cons_path);
         let cons_list: Vec<Constraint> = serde_json::from_slice(&json_slice?)?;

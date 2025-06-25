@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    analysis::constraint::inter::tree::ValueHit,
     config::get_config,
     execution::max_cpu_count,
     feedback::clang_coverage::{
@@ -176,6 +177,12 @@ fn extract_func_name_from_sig(sig: &str) -> Option<String> {
     Some(name.to_string())
 }
 impl Constraint {
+    pub fn is_hit(&self, val_hit: &ValueHit) -> Result<bool> {
+        let loc = val_hit.get_loc();
+        loc.inside_range(&self.range, &self.fpath)
+            .map_err(|e| eyre::eyre!("Failed to check if loc is inside range: {}", e))
+    }
+
     pub fn get_cons_name(&self) -> Result<String> {
         let func_name = self.get_func_name()?;
 
