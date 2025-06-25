@@ -18,7 +18,7 @@ use crate::{
 
 use color_eyre::eyre::Result;
 
-use super::ConsDFBuilder;
+use super::RevIterSolver;
 
 pub mod tree;
 
@@ -30,8 +30,8 @@ pub mod tree;
 #[derive(Debug, Clone)]
 pub struct ExecRec {
     exec_name: String,
-    // func stack path
-    fbs_dir: PathBuf,
+    // execution guard dir
+    execg_dir: PathBuf,
     cov_path: PathBuf,
 }
 
@@ -93,7 +93,7 @@ impl ExecRec {
 
         Ok(Self {
             exec_name,
-            fbs_dir: fs_dir,
+            execg_dir: fs_dir,
             cov_path: cov_path.to_owned(),
         })
     }
@@ -111,7 +111,7 @@ impl ExecRec {
 
         Ok(Self {
             exec_name,
-            fbs_dir: fs_dir.to_owned(),
+            execg_dir: fs_dir.to_owned(),
             cov_path,
         })
     }
@@ -138,7 +138,7 @@ impl CodeCoverage {
     }
 }
 
-impl ConsDFBuilder {
+impl RevIterSolver {
     fn exec_contains_cons(
         idx: usize,
         len: usize,
@@ -222,47 +222,33 @@ impl ConsDFBuilder {
     // }
 
     /// exec -> threads -> func stack list -> func chain list
-    pub fn extract_inter_proc_path_from_chain(&self, exec: &ExecRec) -> Result<Vec<ExecTree>> {
+    pub fn extract_exec_trees_from_rec(&self, exec: &ExecRec) -> Result<Vec<ExecTree>> {
         let mut tree_list: Vec<ExecTree> = vec![];
-        for ent_res in fs::read_dir(&exec.fbs_dir)? {
+        for ent_res in fs::read_dir(&exec.execg_dir)? {
             let entry = ent_res?;
             let fs_path = entry.path();
             assert!(fs_path.is_file(), "Expected a file: {}", fs_path.display());
-            // if !fs_path.exists() {
-            //     bail!(
-            //         "Function stack file for {} does not exist: {}",
-            //         &exec.exec_name,
-            //         fs_path.display()
-            //     );
-            // }
-
-            // recover the stack
-            // let mut func_stack = FuncBrStackBuilder::new(&self.cons.get_func_name()?, &fs_path);
-            // let chain = match func_stack.get_chain() {
-            //     Ok(chain) => chain,
-            //     Err(e) => {
-            //         log::warn!(
-            //             "Failed to get function chain for {}: {}",
-            //             fs_path.display(),
-            //             e
-            //         );
-            //         continue;
-            //     }
-            // };
-            // assert!(
-            //     !chain.is_empty(),
-            //     "Function chain is empty for exec: {}",
-            //     exec.exec_name
-            // );
-            // chain_list.push(chain);
+            let tree = ExecTree::from_guard_file(&fs_path, &self.cons)?;
+            // may need some non-empty check
+            tree_list.push(tree);
         }
-        // assert!(
-        //     !chain_list.is_empty(),
-        //     "No function chains found for exec: {}",
-        //     exec.exec_name
-        // );
-        // Ok(chain_list)
-        todo!()
+        Ok(tree_list)
+    }
+
+    pub fn get_all_exec_trees(&self) -> Result<Vec<ExecTree>> {
+        let execs = self.get_related_executions()?;
+        let mut res_tree_list = vec![];
+        for exec in execs {
+            let chain_list = self.extract_exec_trees_from_rec(&exec)?;
+            assert!(
+                !chain_list.is_empty(),
+                "Function chain is empty for exec: {}",
+                exec.exec_name
+            );
+            res_tree_list.extend(chain_list);
+        }
+        // deduplicate_unordered(&mut res_chain_list);
+        Ok(res_tree_list)
     }
 }
 
@@ -275,13 +261,13 @@ mod tests {
 
     use super::*;
 
-    fn setup_test_consdf_builder() -> Result<ConsDFBuilder> {
+    fn setup_test_consdf_builder() -> Result<RevIterSolver> {
         let work_dir =
             "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-24 10:30:27";
         let cons_path = Path::new(work_dir).join("constraints.json");
         let json_slice = buffer_read_to_bytes(&cons_path);
         let cons_list: Vec<Constraint> = serde_json::from_slice(&json_slice?)?;
-        let builder = ConsDFBuilder::new(&cons_list[0], work_dir);
+        let builder = RevIterSolver::new(&cons_list[0], work_dir);
         Ok(builder)
     }
 
@@ -296,21 +282,21 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_func_chain() -> Result<()> {
+    fn test_exec_tree_construction() -> Result<()> {
         init_report_utils_for_tests()?;
         let builder = setup_test_consdf_builder()?;
 
         let execs = builder.get_related_executions()?;
         let mut res_chain_list = vec![];
         for exec in execs {
-            let chain_list = builder.extract_inter_proc_path_from_chain(&exec)?;
+            let tree_list = builder.extract_exec_trees_from_rec(&exec)?;
             assert!(
-                !chain_list.is_empty(),
+                !tree_list.is_empty(),
                 "Function chain is empty for exec: {}",
                 exec.exec_name
             );
             // log::debug!("Function chain for {}: {:?}", exec.exec_name, chain_list);
-            res_chain_list.extend(chain_list);
+            res_chain_list.extend(tree_list);
         }
         todo!()
         // deduplicate_unordered(&mut res_chain_list);

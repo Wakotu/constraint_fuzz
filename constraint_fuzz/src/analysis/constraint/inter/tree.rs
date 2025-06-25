@@ -496,7 +496,7 @@ impl ExecTree {
         Ok(())
     }
 
-    pub fn get_inter_proc_path(fs_path: &Path, cons: &Constraint) -> Result<Self> {
+    pub fn from_guard_file(fs_path: &Path, cons: &Constraint) -> Result<Self> {
         let mut exec_tree: ExecTree = ExecTree::new();
 
         let file = File::open(fs_path)?;

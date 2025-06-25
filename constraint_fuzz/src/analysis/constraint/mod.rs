@@ -14,12 +14,12 @@ pub mod inter;
 pub type Statement = String; // TODO: define a proper type for statements
 pub type ConsDFInfo = Vec<Statement>;
 
-pub struct ConsDFBuilder {
+pub struct RevIterSolver {
     cons: Constraint,
     work_dir: PathBuf,
 }
 
-impl ConsDFBuilder {
+impl RevIterSolver {
     pub fn new<P: AsRef<Path>>(cons: &Constraint, work_dir: P) -> Self {
         Self {
             cons: cons.clone(),
