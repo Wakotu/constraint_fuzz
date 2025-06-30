@@ -249,6 +249,31 @@ pub struct Config {
 }
 
 impl Config {
+
+    pub fn init_test_with_mode(target: &str, debug_mode: bool) {
+        let config = Config {
+            target: target.to_string(),
+            debug_mode: Some(debug_mode),
+            trunc_cnt: 2,
+            generative: LLMModel::ChatGPT,
+            infill: LLMModel::ChatGPT,
+            n_sample: 10,
+            temperature: 0.9,
+            cores: 10,
+            max_cores: 0,
+            fuzz_round_succ: 1,
+            fuzz_converge_round: 10,
+            exponent_branch: false,
+            recheck: false,
+            fuzzer_run: false,
+            disable_power_schedule: false,
+            query_budget: 5.00,
+        };
+        unsafe {
+            CONFIG_INSTANCE = Some(config);
+        }
+        crate::init_debug_logger().unwrap();
+    }
     pub fn init_test(target: &str) {
         let config = Config {
             target: target.to_string(),
@@ -425,6 +450,10 @@ pub fn get_complete_gen_tempate() -> &'static str {
 
 pub fn get_trunc_cnt() -> usize {
     get_config().trunc_cnt
+}
+
+pub fn is_debug_mode() -> bool {
+    get_config().debug_mode.is_some_and(|b| b)
 }
 
 

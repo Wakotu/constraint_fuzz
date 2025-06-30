@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
@@ -7,8 +8,8 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::tree::ValueHit,
-    config::get_config,
+    analysis::constraint::inter::{tree::ValueHit, ExecRec},
+    config::{get_config, is_debug_mode},
     execution::max_cpu_count,
     feedback::clang_coverage::{
         get_cov_region_fileid, BranchCount, CodeCoverage, CovBranch, CovFunction, CovRegion,
@@ -176,7 +177,97 @@ fn extract_func_name_from_sig(sig: &str) -> Option<String> {
     let name = before_paren.split_whitespace().last()?;
     Some(name.to_string())
 }
+
+impl std::fmt::Display for Constraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Constraint {} at {:?} with range {:?}",
+            self.cond_expr, self.fpath, self.range
+        )
+    }
+}
+
 impl Constraint {
+    fn exec_contains_cons(
+        idx: usize,
+        len: usize,
+        exec: &ExecRec,
+        cons: &Constraint,
+    ) -> Result<bool> {
+        log::debug!("Processing execution {}/{}: {}", idx + 1, len, exec);
+        let cov = exec.get_coverage()?;
+        let flag = cov.contains_cons(cons)?;
+        if flag {
+            log::debug!("Execution {} contains constraint", exec);
+        } else {
+            log::debug!("Execution {} does not contain constraint", exec);
+
+            if is_debug_mode() {
+                let br_rgn_list = cov.get_related_br_regions(cons)?;
+                if !br_rgn_list.is_empty() {
+                    log::warn!("Related branch region for {}: {:?}", exec, br_rgn_list);
+                } else {
+                    log::debug!(
+                        "No related branches found for {} with constraint: {}",
+                        exec,
+                        cons
+                    );
+                }
+            }
+        }
+
+        Ok(flag)
+    }
+
+    pub fn get_related_executions(&self, work_dir: &Path) -> Result<Vec<ExecRec>> {
+        let exec_list = ExecRec::get_exec_list_from_work_dir(work_dir)?;
+        let res_list: Vec<ExecRec> = exec_list
+            .par_iter()
+            .enumerate()
+            .filter_map(|(idx, exec)| {
+                match Self::exec_contains_cons(idx, exec_list.len(), exec, self) {
+                    Ok(true) => Some(exec.to_owned()),
+                    Ok(false) => None,
+                    Err(e) => {
+                        // log::warn!("Error processing execution {}: {}", exec.exec_name, e);
+                        // None
+                        panic!("Error processing execution {}: {}", exec, e);
+                    }
+                }
+            })
+            .collect();
+        if res_list.is_empty() {
+            bail!("No related executions found for constraint: {:?}", self);
+        }
+        Ok(res_list)
+    }
+
+    pub fn same_src_file(&self, val_hit: &ValueHit) -> bool {
+        let val_path_op = val_hit.get_src_path();
+        match val_path_op {
+            None => false,
+            Some(val_path) => self.fpath == val_path,
+        }
+    }
+
+    pub fn near_hit(&self, val_hit: &ValueHit) -> bool {
+        if !self.same_src_file(val_hit) {
+            return false;
+        }
+        let cons_line = self.range[0];
+        let val_line_op = val_hit.get_line();
+        match val_line_op {
+            None => false,
+            Some(val_line) => {
+                // check if the value hit is within 5 lines of the constraint
+                let line_diff = (cons_line as isize - val_line as isize).abs();
+                line_diff <= 5
+            }
+        }
+    }
+
+    /// judge if a CovFunction is related to this constraint
     pub fn is_hit(&self, val_hit: &ValueHit) -> Result<bool> {
         let loc = val_hit.get_loc();
         loc.inside_range(&self.range, &self.fpath)
@@ -355,13 +446,7 @@ impl CovFunction {
             let mac_text = self.get_region_text(mac_rgn)?;
             let expd_text = self.get_region_text(&expd_rgn)?;
 
-            let debug_mode = get_config().debug_mode;
-            if debug_mode.is_some_and(|d| d) {
-                self.show_region_debug_info(mac_rgn, "macro", &mac_text)?;
-                self.show_region_debug_info(&expd_rgn, "expanded", &expd_text)?;
-            }
-            // #[cfg(debug_assertions)]
-            // {
+            // if is_debug_mode() {
             //     self.show_region_debug_info(mac_rgn, "macro", &mac_text)?;
             //     self.show_region_debug_info(&expd_rgn, "expanded", &expd_text)?;
             // }

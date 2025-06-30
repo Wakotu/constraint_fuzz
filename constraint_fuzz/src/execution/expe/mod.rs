@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{logger::TimeUsage, Executor};
-use crate::deopt::Deopt;
+// use crate::deopt::Deopt;
 // use color_eyre::eyre::Result;
 // use crate::feedback::branches::constraints::collect_constraints_from_cov;
 use color_eyre::eyre::Result;
@@ -177,8 +177,8 @@ mod tests {
     use crate::{deopt::Deopt, setup_test_run_entry};
 
     #[test]
-    fn test_expe_cov_collect() -> Result<()> {
-        setup_test_run_entry("libaom")?;
+    fn test_expe_run() -> Result<()> {
+        setup_test_run_entry("libaom", false)?;
         let deopt = Deopt::new("libaom")?;
         let executor = Executor::new(&deopt)?;
         executor.run_expe("/struct_fuzz/constraint_fuzz/examples/libaom/example_fuzzer.cc")?;

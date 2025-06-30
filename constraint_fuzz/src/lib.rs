@@ -63,9 +63,9 @@ fn my_format(
     Ok(())
 }
 
-pub fn setup_test_run_entry(proj_name: &str) -> Result<()> {
+pub fn setup_test_run_entry(proj_name: &str, debug_mode: bool) -> Result<()> {
     // defaults to libaom as test
-    Config::init_test(proj_name);
+    Config::init_test_with_mode(proj_name, debug_mode);
     color_eyre::install()?;
     Ok(())
 }

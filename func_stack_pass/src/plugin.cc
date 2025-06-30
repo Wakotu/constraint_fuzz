@@ -3,6 +3,8 @@
 #include <cassert>
 #include <iostream>
 #include <llvm-19/llvm/ADT/StringRef.h>
+#include <llvm-19/llvm/Analysis/LoopAnalysisManager.h>
+#include <llvm-19/llvm/Analysis/LoopInfo.h>
 #include <llvm-19/llvm/IR/Constant.h>
 #include <llvm-19/llvm/IR/Value.h>
 #include <optional>
@@ -32,9 +34,10 @@
 #include <llvm-19/llvm/Transforms/Instrumentation.h>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 
-PreservedAnalyses MyPass::run(Module &m, ModuleAnalysisManager &mam) {
-  bool flag = runOnModule(m, mam);
+PreservedAnalyses MyPass::run(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = runOnModule(M, MAM);
   if (flag) {
     return PreservedAnalyses::none();
   } else {
@@ -57,25 +60,25 @@ PreservedAnalyses MyPass::run(Module &m, ModuleAnalysisManager &mam) {
 //   return printf_cl;
 // }
 
-FunctionCallee get_pop_func_decl(Module &m) {
-  LLVMContext &ctx = m.getContext();
+FunctionCallee get_pop_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
   Type *void_ty = Type::getVoidTy(ctx);
   Type *i8_ty = Type::getInt8Ty(ctx);
   Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
 
   FunctionType *pop_func_ty = FunctionType::get(void_ty, {i8_ptr_ty}, false);
-  FunctionCallee pop_func_cl = m.getOrInsertFunction("pop_func", pop_func_ty);
+  FunctionCallee pop_func_cl = M.getOrInsertFunction("pop_func", pop_func_ty);
   return pop_func_cl;
 }
 
-FunctionCallee get_push_func_decl(Module &m) {
-  LLVMContext &ctx = m.getContext();
+FunctionCallee get_push_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
   Type *void_ty = Type::getVoidTy(ctx);
   Type *char_ty = Type::getInt8Ty(ctx);
   Type *chat_ptr_ty = PointerType::getUnqual(char_ty);
   FunctionType *push_func_ty = FunctionType::get(void_ty, {chat_ptr_ty}, false);
   FunctionCallee push_func_cl =
-      m.getOrInsertFunction("push_func", push_func_ty);
+      M.getOrInsertFunction("push_func", push_func_ty);
   return push_func_cl;
 }
 
@@ -101,23 +104,23 @@ bool should_skip_func(const Function &f) {
   return from_stdlib(f);
 }
 
-bool insert_func(Module &m, ModuleAnalysisManager &mam) {
-  auto push_func_cl = get_push_func_decl(m);
-  auto pop_func_cl = get_pop_func_decl(m);
+bool insert_func(Module &M, ModuleAnalysisManager &MAM) {
+  auto push_func_cl = get_push_func_decl(M);
+  auto pop_func_cl = get_pop_func_decl(M);
 
-  for (Function &f : m) {
-    if (should_skip_func(f))
+  for (Function &F : M) {
+    if (should_skip_func(F))
       continue;
 
     // entry insertion
-    auto pt = f.getEntryBlock().getFirstInsertionPt();
+    auto pt = F.getEntryBlock().getFirstInsertionPt();
     InstrumentationIRBuilder irb(&*pt);
 
-    auto func_name_ptr = irb.CreateGlobalStringPtr(f.getName());
+    auto func_name_ptr = irb.CreateGlobalStringPtr(F.getName());
     irb.CreateCall(push_func_cl, {func_name_ptr});
 
     // exit insertion
-    for (auto &bb : f) {
+    for (auto &bb : F) {
       if (ReturnInst *ret_inst = dyn_cast<ReturnInst>(bb.getTerminator())) {
         InstrumentationIRBuilder irb(ret_inst);
         irb.CreateCall(pop_func_cl, {func_name_ptr});
@@ -156,6 +159,7 @@ SrcLoc get_src_loc(Instruction *inst, Module &M) {
   }
   return loc;
 }
+
 SrcLoc get_src_loc_with_path(Instruction *inst, StringRef src_path) {
   SrcLoc loc;
   loc.src_path = src_path;
@@ -170,16 +174,16 @@ SrcLoc get_src_loc_with_path(Instruction *inst, StringRef src_path) {
   return loc;
 }
 
-FunctionCallee get_rec_log_func_decl(Module &m) {
-  LLVMContext &ctx = m.getContext();
+FunctionCallee get_rec_log_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
   Type *void_ty = Type::getVoidTy(ctx);
   Type *i8_ty = Type::getInt8Ty(ctx);
   Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
 
   FunctionType *rec_log_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
-  FunctionCallee rec_log_func_cl =
-      m.getOrInsertFunction("print_rec_to_file", rec_log_func_ty);
+  FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
+      "print_rec_to_file_with_loop_guard", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -295,11 +299,9 @@ br_rec:
 //       return;
 //     }
 
-//     errs() << GREEN << "[Br Condition] " << RESET << "Instruction: ";
 //     I->print(errs());
 //   } else {
 
-//     errs() << GREEN << "[Br Condition] " << RESET;
 //     errs() << "Not an instruction: ";
 //     cond->print(errs());
 //   }
@@ -385,7 +387,6 @@ bool is_bool_value(Instruction *I) {
 //         if (is_bool_value(&I)) {
 
 //           flag = true;
-//           // errs() << GREEN << "Before Loc Get" << RESET << "\n";
 //           SrcLoc loc = get_src_loc(&I, M);
 
 //           auto it = bool_loc_seen.find(loc);
@@ -411,7 +412,6 @@ bool is_bool_value(Instruction *I) {
 //           FunctionCallee rec_log_func_cl = get_rec_log_func_decl(M);
 //           InstrumentationIRBuilder irb(&I);
 //           // create global string
-//           errs() << GREEN << "Before Instrumentation" << RESET << "\n";
 //           LLVM_DEBUG(dbgs() << "My debug message\n");
 //           auto rec_str_ptr = irb.CreateGlobalStringPtr(rec);
 //           // insert invocation
@@ -430,6 +430,8 @@ bool is_unconditional_br(Instruction *I) {
   }
   return !br_inst->isConditional(); // true if it's an unconditional branch
 }
+
+static std::unordered_set<SrcLoc> ubr_loc_seen;
 
 bool instr_from_phi_node(PHINode *phi_node, Module &M) {
   bool flag = false;
@@ -461,23 +463,34 @@ bool instr_from_phi_node(PHINode *phi_node, Module &M) {
       errs() << "\n";
       continue; // skip if the incoming value is not an instruction
     }
+
+    // errs() << "\n";
+    // errs() << GREEN << "[Phi Node Instrument] " << RESET << "Incoming Value:
+    // "; val_inst->print(errs()); errs() << "\nIncoming block:";
+    // incoming_bb->print(errs());
+    // errs() << "phi instruction: ";
+    // phi_node->print(errs());
+    // errs() << "at pair " << i + 1 << " of " << num_incoming << "\n";
+
     // assert(val_inst && "Incoming value is not an instruction");
     if (PHINode *sub_node = dyn_cast<PHINode>(val_inst)) {
       errs() << YELLOW << "[Warning] " << RESET
              << "Phi node found in incoming value, recursing into it: ";
       val_inst->print(errs());
+
       errs() << "\n";
       instr_from_phi_node(sub_node, M);
     } else {
-      flag = true;
       SrcLoc val_loc = get_src_loc(val_inst, M);
 
-      /** message for debug */
-      errs() << GREEN
-             << "Before Unconditional Br Value Instrumentation: " << RESET;
-      // output val_inst text
-      val_inst->print(errs());
-      errs() << "\n";
+      auto it = ubr_loc_seen.find(val_loc);
+
+      if (it != ubr_loc_seen.end()) {
+        // already seen this location, skip
+        continue;
+      }
+      ubr_loc_seen.insert(val_loc);
+      flag = true;
 
       errs() << BLUE << "[Unconditional Br Value Instrument] " << RESET
              << "Location: " << val_loc << "\n";
@@ -547,14 +560,161 @@ bool insert_branches(Module &M, ModuleAnalysisManager &MAM) {
 // bool insert_loop(Module &m, ModuleAnalysisManager &mam) {
 // }
 
-bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &mam) {
+FunctionCallee get_loop_hit_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+
+  FunctionType *loop_hit_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty}, false);
+  FunctionCallee loop_hit_func_cl =
+      M.getOrInsertFunction("loop_hit", loop_hit_func_ty);
+  return loop_hit_func_cl;
+}
+
+FunctionCallee get_loop_end_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+
+  FunctionType *loop_end_func_ty = FunctionType::get(void_ty, i8_ptr_ty, false);
+  FunctionCallee loop_end_func_cl =
+      M.getOrInsertFunction("loop_end", loop_end_func_ty);
+  return loop_end_func_cl;
+}
+
+bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
+  errs() << "\n";
+  // instrument at loop entry
+  BasicBlock *header = L->getHeader();
+  if (!header) {
+    return false; // no header, nothing to instrument
+  }
+
+  // get the first instruction in the header
+  Instruction *header_term = header->getTerminator();
+  if (!header_term) {
+    return false; // no instruction to instrument
+  }
+
+  SrcLoc header_loc = get_src_loc(header_term, M);
+  errs() << BLUE << "[Loop Instrument] " << RESET
+         << "Loop Header Location: " << header_loc << "\n";
+  std::stringstream ss;
+  ss << header_loc;
+
+  std::string loop_loc = ss.str();
+  // create instrumentation IR builder
+  InstrumentationIRBuilder irb(header_term);
+
+  // create a call to loop_hit function with loop location
+  auto loop_loc_str = irb.CreateGlobalStringPtr(loop_loc);
+  FunctionCallee loop_hit_cl = get_loop_hit_func_decl(M);
+  irb.CreateCall(loop_hit_cl, {loop_loc_str});
+
+  // instrument at loop exit
+  SmallVector<BasicBlock *, 4> exit_blocks;
+  L->getExitBlocks(exit_blocks);
+  if (exit_blocks.empty()) {
+    return false; // no exit blocks, nothing to instrument
+  }
+
+  // instrument each exit block
+  for (BasicBlock *exit_block : exit_blocks) {
+    // get the first instruction in the exit block
+    Instruction *first_inst = &*exit_block->getFirstInsertionPt();
+    if (!first_inst) {
+      continue; // no instruction to instrument
+    }
+    // errs() << GREEN << "[Loop Instrument] " << RESET
+    //        << "Loop Exit Block: " << exit_block->getName();
+    // exit_block->print(errs());
+    // errs() << GREEN << "[Loop Instrument] " << RESET
+    //        << "First Instruction in Exit Block: ";
+    // first_inst->print(errs());
+    // errs() << "\n";
+
+    errs() << BLUE << "[Loop Instrument] " << RESET
+           << "Loop Exit Location: " << get_src_loc(first_inst, M) << "\n";
+
+    // create instrumentation IR builder
+    InstrumentationIRBuilder irb(first_inst);
+    // create a call to loop_end function
+    FunctionCallee loop_end_cl = get_loop_end_func_decl(M);
+    irb.CreateCall(loop_end_cl, loop_loc_str);
+  }
+
+  return true;
+}
+
+using LoopList = std::vector<Loop *>;
+
+LoopList collect_loop_instr_recur(Loop *L) {
+  LoopList loops = {L};
+  errs() << GREEN << "[Loop Instrument] " << RESET
+         << "Collecting loop: " << L->getHeader()->getName() << "\n";
+
+  for (Loop *sub_loop : L->getSubLoops()) {
+    errs() << GREEN << "[Loop Instrument] " << RESET
+           << "Collecting sub-loop: " << sub_loop->getHeader()->getName()
+           << "\n";
+    LoopList sub_loops = collect_loop_instr_recur(sub_loop);
+    errs() << GREEN << "[Loop Instrument] " << RESET << "Collected "
+           << sub_loops.size() << " sub-loops, inserting.\n";
+    loops.insert(loops.end(), sub_loops.begin(), sub_loops.end());
+  }
+  return loops;
+}
+
+bool instru_for_loop_context(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = false;
+  FunctionAnalysisManager &FAM =
+      MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+
+  errs() << GREEN << "[Loop Instrument] " << RESET
+         << "Collecting loops in the module...\n";
+  LoopList loops;
+  for (Function &F : M) {
+    if (F.isDeclaration()) {
+      continue; // skip declarations
+    }
+    LoopInfo &LI = FAM.getResult<LoopAnalysis>(F);
+    if (LI.empty()) {
+      errs() << YELLOW << "[Loop Instrument] " << RESET
+             << "No loops found in function: " << F.getName() << "\n";
+      continue; // no loops in this function
+    }
+    for (Loop *L : LI) {
+      LoopList sub_loops = collect_loop_instr_recur(L);
+      loops.insert(loops.end(), sub_loops.begin(), sub_loops.end());
+    }
+  }
+
+  errs() << GREEN << "[Loop Instrument] " << RESET << "Found " << loops.size()
+         << " loops in the module.\n";
+
+  if (loops.empty()) {
+    errs() << YELLOW << "[Loop Instrument] " << RESET
+           << "No loops found in the module.\n";
+    return false; // no loops to instrument
+  }
+  for (Loop *L : loops) {
+    flag |= instru_at_loop_entry_and_exit(L, M);
+  }
+  return flag;
+}
+
+bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // auto printf_cl = add_printf_decl(m);
   // modification already
   bool flag = false;
 
-  flag |= insert_func(M, mam);
-  flag |= insert_branches(M, mam);
+  flag |= insert_func(M, MAM);
+  flag |= insert_branches(M, MAM);
   // flag |= instr_bool_value(M);
+  flag |= instru_for_loop_context(M, MAM);
   return flag;
 }
 

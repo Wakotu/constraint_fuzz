@@ -20,6 +20,7 @@ find_package(LLVM REQUIRED CONFIG)
 set(FSP_NAME "func_stack_pass" CACHE STRING "Plugin name")
 set(FSP_PLUGIN_LIB "func_stack_plugin" CACHE STRING "Plugin library name")
 set(FSP_IMPL_LIB "func_stack" CACHE STRING "Implementation library name")
+set(LOOP_LIMIT 3 CACHE STRING "Loop limit for loop entry instrumentation")
 
 # custom global constants
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")

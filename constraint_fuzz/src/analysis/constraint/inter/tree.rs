@@ -1,4 +1,5 @@
 use color_eyre::eyre::{bail, Result};
+use std::fmt;
 use std::{
     cell::RefCell,
     fs::File,
@@ -7,6 +8,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use crate::analysis::constraint::inter::loc::SrcLoc;
+use crate::config::is_debug_mode;
 use crate::{
     config::get_trunc_cnt,
     feedback::branches::constraints::{Constraint, LocTrait, Range, RangeTrait},
@@ -14,6 +17,18 @@ use crate::{
 
 pub type SharedFuncNodePtr = Rc<RefCell<FuncNode>>;
 pub type WeakFuncNodePtr = Weak<RefCell<FuncNode>>;
+
+const NODE_DELIM: &str = ", ";
+
+fn get_prefix(line: &str) -> Result<&str> {
+    // get position of ':' in the line
+    if let Some(pos) = line.find(':') {
+        // return the substring from the start to the position of ':'
+        Ok(&line[..pos + 1])
+    } else {
+        bail!("Line does not contain a colon: {}", line);
+    }
+}
 
 #[derive(Clone)]
 pub enum FuncActionType {
@@ -70,6 +85,22 @@ pub struct FuncAction {
     func_name: String,
 }
 
+impl fmt::Debug for FuncAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.act_type {
+            FuncActionType::Call { child_ptr } => {
+                write!(
+                    f,
+                    "Call({}) -> Child({:?})",
+                    self.func_name,
+                    child_ptr.borrow()
+                )
+            }
+            FuncActionType::Return => write!(f, "Return({})", self.func_name),
+        }
+    }
+}
+
 impl FuncAction {
     pub fn is_call(&self) -> bool {
         matches!(self.act_type, FuncActionType::Call { .. })
@@ -101,54 +132,6 @@ impl FuncAction {
 // }
 
 #[derive(Clone)]
-pub struct SrcLoc {
-    fpath: PathBuf,
-    line: usize,
-    col: usize,
-}
-
-impl SrcLoc {
-    pub fn inside_range(&self, rng: &Range, fpath: &Path) -> Result<bool> {
-        if self.fpath != fpath {
-            return Ok(false);
-        }
-
-        let [sloc, eloc] = rng.extract_locs()?;
-        let loc = [self.line, self.col];
-        Ok(sloc.is_less_equal(&loc) && loc.is_less_equal(&eloc))
-    }
-
-    pub fn parse_line_with_prefix(line: &str, prefix: &str) -> Result<Self> {
-        if !line.starts_with(prefix) {
-            bail!("Line does not start with expected prefix: {}", line);
-        }
-
-        let loc_str = &line[prefix.len()..].trim();
-        Self::from_str(loc_str)
-    }
-
-    pub fn from_str(s: &str) -> Result<Self> {
-        // example: /path/to/file.c:123:45
-        let mut parts = s.rsplitn(3, ':');
-        let col_str = parts
-            .next()
-            .ok_or_else(|| eyre::eyre!("Missing column in source location"))?;
-        let line_str = parts
-            .next()
-            .ok_or_else(|| eyre::eyre!("Missing line in source location"))?;
-        let fpath_str = parts
-            .next()
-            .ok_or_else(|| eyre::eyre!("Missing file path in source location"))?;
-
-        let col = col_str.parse::<usize>()?;
-        let line = line_str.parse::<usize>()?;
-        let fpath = PathBuf::from(fpath_str);
-
-        Ok(Self { fpath, line, col })
-    }
-}
-
-#[derive(Clone)]
 enum IntraActionType {
     BrGuard,
     SwitchGuard,
@@ -166,6 +149,16 @@ impl IntraActionType {
     }
 }
 
+impl fmt::Debug for IntraActionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IntraActionType::BrGuard => write!(f, "BrGuard"),
+            IntraActionType::SwitchGuard => write!(f, "SwitchGuard"),
+            IntraActionType::IndirectGuard => write!(f, "IndirectGuard"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct IntraAction {
     intra_type: IntraActionType,
@@ -174,15 +167,16 @@ pub struct IntraAction {
     dest_loc: SrcLoc,
 }
 
-fn get_prefix(line: &str) -> Result<&str> {
-    // get position of ':' in the line
-    if let Some(pos) = line.find(':') {
-        // return the substring from the start to the position of ':'
-        Ok(&line[..pos + 1])
-    } else {
-        bail!("Line does not contain a colon: {}", line);
+impl fmt::Debug for IntraAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} at {:?} with value {} to {:?}",
+            self.intra_type, self.cond_loc, self.cond_val, self.dest_loc
+        )
     }
 }
+
 impl IntraAction {
     pub fn parse_simple_guard(line: &str) -> Result<Self> {
         let prefix = get_prefix(line)?;
@@ -244,8 +238,16 @@ impl IntraAction {
 #[derive(Clone)]
 pub enum ExecAction {
     Func(FuncAction),
+    Intra(IntraAction),
+}
 
-    Br(IntraAction),
+impl fmt::Debug for ExecAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
+            ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
+        }
+    }
 }
 
 // impl ActionTrait for ExecAction {
@@ -273,6 +275,30 @@ pub struct FuncNode {
     // node_type field which contains func name
     node_type: FuncEntryType,
     data: Vec<ExecAction>,
+}
+
+impl fmt::Debug for FuncNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.node_type {
+            FuncEntryType::Init => write!(f, "Init Node("),
+            FuncEntryType::Regular { name, parent: _ } => {
+                write!(f, "{} Node(", name)
+            }
+        }?;
+
+        write!(f, "\n")?;
+
+        // action list output
+        for (idx, act) in self.data.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "{}", NODE_DELIM)?;
+            }
+            writeln!(f, "{:?}", act)?;
+        }
+
+        writeln!(f, ")")?;
+        Ok(())
+    }
 }
 
 impl FuncNode {
@@ -331,9 +357,22 @@ pub struct ValueHit {
     loc: SrcLoc,
 }
 
+impl fmt::Debug for ValueHit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ValueHit({:?})", self.loc)
+    }
+}
+
 impl ValueHit {
+    pub fn get_src_path(&self) -> Option<&Path> {
+        self.loc.get_src_path()
+    }
     pub fn get_loc(&self) -> &SrcLoc {
         &self.loc
+    }
+
+    pub fn get_line(&self) -> Option<usize> {
+        self.loc.get_line()
     }
     pub fn parse_value_guard(line: &str) -> Result<ValueHit> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
@@ -396,12 +435,12 @@ impl ExecTree {
             return Ok((Some(value_hit), None));
         }
         if let Ok(intra_act) = IntraAction::parse_simple_guard(line) {
-            return Ok((None, Some(ExecAction::Br(intra_act))));
+            return Ok((None, Some(ExecAction::Intra(intra_act))));
         }
 
         // regular br parse
         if let Ok((value_hit, intra_act)) = Self::parse_regular_br_guard(line) {
-            return Ok((Some(value_hit), Some(ExecAction::Br(intra_act))));
+            return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act))));
         }
 
         let func_act = self.create_func_act(line)?;
@@ -487,7 +526,14 @@ impl ExecTree {
         }
 
         if let Some(val_hit) = value_hit_op {
-            // TODO: truncation logic
+            // if is_debug_mode() && cons.same_src_file(&val_hit) {
+            //     log::debug!("Value Hit: {:?}", val_hit);
+            //     log::debug!("Constraint: {}", cons);
+            // }
+            if is_debug_mode() && cons.near_hit(&val_hit) {
+                log::debug!("Value Hit: {:?}", val_hit);
+                log::debug!("Constraint: {}", cons);
+            }
             if cons.is_hit(&val_hit)? {
                 *hit_cnt += 1;
             }
@@ -502,7 +548,8 @@ impl ExecTree {
         let file = File::open(fs_path)?;
         let reader = BufReader::new(file);
         let mut hit_cnt = 0;
-        for line_res in reader.lines() {
+        for (idx, line_res) in reader.lines().enumerate() {
+            log::info!("Processing line {}: {}", idx + 1, fs_path.display());
             let line = line_res?;
             // let exec_act = ExecAction::from_line(&line)?;
             exec_tree.read_line(&line, cons, &mut hit_cnt)?;
@@ -513,5 +560,14 @@ impl ExecTree {
         }
 
         Ok(exec_tree)
+    }
+}
+
+impl fmt::Debug for ExecTree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let root = self.root_ptr.borrow();
+        writeln!(f, "ExecTree:")?;
+        write!(f, "{:?}", root)?;
+        Ok(())
     }
 }

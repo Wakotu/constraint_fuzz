@@ -9,7 +9,12 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crate::{deopt::utils::get_file_dirname, feedback::observer::Observer};
+use crate::analysis::constraint::inter::loc::SrcRegion;
+
+use crate::{
+    deopt::utils::get_file_dirname,
+    feedback::{branches::constraints::Constraint, observer::Observer},
+};
 use crate::{execution::Executor, program::serde::Deserializer};
 
 use super::branches::{
@@ -43,6 +48,19 @@ pub struct CovFunction {
 }
 
 impl CovFunction {
+    pub fn iter_cov_branches(&self) -> core::slice::Iter<CovBranch> {
+        self.branches.iter()
+    }
+
+    pub fn get_br_regions(&self) -> Result<Vec<SrcRegion>> {
+        let mut regions = Vec::new();
+        for cov_br in self.iter_cov_branches() {
+            let src_region = SrcRegion::from_cov_br(cov_br, self)?;
+            regions.push(src_region);
+        }
+        Ok(regions)
+    }
+
     pub fn get_unselected_branch(&self) -> Vec<Branch> {
         let mut br_list: Vec<Branch> = vec![];
         for br in self.branches.iter() {

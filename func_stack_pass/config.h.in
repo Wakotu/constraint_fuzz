@@ -4,5 +4,6 @@
 // Macros defined by CMake
 #define PLUGIN_NAME "@PLUGIN_NAME@"
 #define OUTPUT_ENV_VAR "@OUTPUT_ENV_VAR@"
+#define LOOP_LIMIT @LOOP_LIMIT@
 
 #endif // CONFIG_H

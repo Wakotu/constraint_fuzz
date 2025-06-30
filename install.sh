@@ -4,6 +4,7 @@ export FSP_INSTALL_PREFIX="$HOME"/.local/lib
 export FSP_NAME="func_stack_pass"
 export FSP_PLUGIN_LIB='func_stack_plugin'
 export FSP_IMPL_LIB='func_stack'
+export LOOP_LIMIT=3
 
 if [[ ! -d "$FSP_INSTALL_PREFIX" ]]; then
   mkdir -p "$FSP_INSTALL_PREFIX"

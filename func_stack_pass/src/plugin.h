@@ -10,8 +10,8 @@ using namespace llvm;
 
 class MyPass : public PassInfoMixin<MyPass> {
 public:
-  PreservedAnalyses run(Module &m, ModuleAnalysisManager &mam);
-  bool runOnModule(Module &m, ModuleAnalysisManager &mam);
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
+  bool runOnModule(Module &M, ModuleAnalysisManager &MAM);
   static bool isRequired();
 };
 

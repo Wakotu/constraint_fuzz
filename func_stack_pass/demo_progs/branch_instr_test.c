@@ -16,10 +16,12 @@ int main(int argc, char *argv[]) {
   }
 
   for (int i = 0; i < num; i++) {
-    if (i % 2 == 0) {
-      printf("Even number: %d\n", i);
-    } else {
-      printf("Odd number: %d\n", i);
+    for (int j = i; j < num; j++) {
+      if (j % 2 == 0) {
+        printf("Inner loop even number: %d\n", j);
+      } else {
+        printf("Inner loop odd number: %d\n", j);
+      }
     }
   }
 

@@ -64,6 +64,11 @@ inline bool operator==(const SrcLoc &lhs, const SrcLoc &rhs) {
 namespace std {
 template <> struct hash<SrcLoc> {
   size_t operator()(const SrcLoc &t) const {
+    if (!t.is_valid()) {
+      // If the SrcLoc is invalid, return a fixed hash value
+      return std::hash<std::string>{}("InvalidSrcLoc");
+    }
+
     size_t h1 = std::hash<std::string>{}(t.src_path);
     size_t h2 = std::hash<unsigned int>{}(t.line.value());
     size_t h3 = std::hash<unsigned int>{}(t.col.value());
