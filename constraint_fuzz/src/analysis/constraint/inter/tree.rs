@@ -20,6 +20,8 @@ pub type WeakFuncNodePtr = Weak<RefCell<FuncNode>>;
 
 const NODE_DELIM: &str = ", ";
 
+/// Get the prefix of a line, which is the substring from the start to the first occurrence of ':'.
+/// Contains `:` at the end.
 fn get_prefix(line: &str) -> Result<&str> {
     // get position of ':' in the line
     if let Some(pos) = line.find(':') {
@@ -71,12 +73,6 @@ impl FuncActionType {
             Self::get_func_name_from_line(line, Self::RET_PREFIX)
         }
     }
-}
-
-pub trait ActionTrait {
-    fn from_line(line: &str) -> Result<Self>
-    where
-        Self: Sized;
 }
 
 #[derive(Clone)]
@@ -236,9 +232,202 @@ impl IntraAction {
 }
 
 #[derive(Clone)]
+enum LoopEntryType {
+    Hit,
+    Exceed,
+}
+
+impl LoopEntryType {
+    const HIT_PREFIX: &'static str = "Loop Hit:";
+    const EXCEED_PREFIX: &'static str = "Loop Limit Exceed:";
+
+    pub fn parse_prefix(prefix: &str) -> Result<usize> {
+        match prefix {
+            Self::HIT_PREFIX => Ok(Self::HIT_PREFIX.len()),
+            Self::EXCEED_PREFIX => Ok(Self::EXCEED_PREFIX.len()),
+            _ => bail!("Unknown loop entry type prefix: {}", prefix),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum LoopEndType {
+    Out { count: usize },
+    NoStart,
+}
+
+impl LoopEndType {
+    const OUT_PREFIX: &'static str = "Out of Loop:";
+    const NO_START_PREFIX: &'static str = "Loop end without loop start:";
+
+    pub fn parse_prefix(prefix: &str) -> Result<usize> {
+        match prefix {
+            Self::OUT_PREFIX => Ok(Self::OUT_PREFIX.len()),
+            Self::NO_START_PREFIX => Ok(Self::NO_START_PREFIX.len()),
+            _ => bail!("Unknown loop end type prefix: {}", prefix),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum LoopActionType {
+    LoopEntry {
+        count: usize,
+        entry_type: LoopEntryType,
+    },
+    LoopEnd(LoopEndType),
+}
+
+#[derive(Clone)]
+pub struct LoopAction {
+    la_type: LoopActionType,
+    header_loc: SrcLoc,
+}
+
+impl LoopAction {
+    // Loop Entry Prefix
+    const HIT_PREFIX: &'static str = "Loop Hit:";
+    const EXCEED_PREFIX: &'static str = "Loop Limit Exceed:";
+
+    // Loop End Prefix
+    const OUT_PREFIX: &'static str = "Out of Loop:";
+    const NO_START_PREFIX: &'static str = "Loop end without loop start:";
+
+    fn parse_loop_cnt(slice: &str) -> Result<usize> {
+        const LOOP_CNT_PREFIX: &str = "at count";
+        let slice = slice.trim();
+        let cnt_slice = &slice[LOOP_CNT_PREFIX.len()..].trim();
+        cnt_slice
+            .parse::<usize>()
+            .map_err(|_| eyre::eyre!("Failed to parse loop count from slice: {}", slice))
+    }
+
+    /// Parse content part for header_loc and count.
+    fn parse_content_with_count(content_slice: &str) -> Result<(SrcLoc, usize)> {
+        let content_slice = content_slice.trim();
+        let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
+            eyre::eyre!(
+                "Content slice does not contain whitespace: {}",
+                content_slice
+            )
+        })?;
+        let loc_part = &content_slice[..pos];
+        let header_loc = SrcLoc::from_str(loc_part)?;
+        let cnt_part = &content_slice[pos..];
+        let count = Self::parse_loop_cnt(cnt_part)?;
+
+        Ok((header_loc, count))
+    }
+
+    fn parse_content_wo_count(content_slice: &str) -> Result<SrcLoc> {
+        let content_slice = content_slice.trim();
+        if content_slice.is_empty() {
+            bail!("Content slice is empty, cannot parse header location");
+        }
+        SrcLoc::from_str(content_slice)
+    }
+
+    pub fn from_line(line: &str) -> Result<Self> {
+        let prefix = get_prefix(line)?;
+
+        if prefix.starts_with(Self::HIT_PREFIX) {
+            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+            return Ok(Self {
+                la_type: LoopActionType::LoopEntry {
+                    count,
+                    entry_type: LoopEntryType::Hit,
+                },
+                header_loc,
+            });
+        } else if prefix.starts_with(Self::EXCEED_PREFIX) {
+            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+            return Ok(Self {
+                la_type: LoopActionType::LoopEntry {
+                    count,
+                    entry_type: LoopEntryType::Exceed,
+                },
+                header_loc,
+            });
+        } else if prefix.starts_with(Self::OUT_PREFIX) {
+            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+            return Ok(Self {
+                la_type: LoopActionType::LoopEnd(LoopEndType::Out { count }),
+                header_loc,
+            });
+        } else if prefix.starts_with(Self::NO_START_PREFIX) {
+            let header_loc = Self::parse_content_wo_count(&line[prefix.len()..])?;
+            return Ok(Self {
+                la_type: LoopActionType::LoopEnd(LoopEndType::NoStart),
+                header_loc,
+            });
+        }
+
+        bail!("Line does not match any known loop action format: {}", line);
+    }
+
+    pub fn get_header_loc(&self) -> &SrcLoc {
+        &self.header_loc
+    }
+
+    pub fn get_count(&self) -> Option<usize> {
+        match self.la_type {
+            LoopActionType::LoopEntry {
+                count,
+                entry_type: _,
+            } => Some(count),
+            LoopActionType::LoopEnd(LoopEndType::Out { count }) => Some(count),
+            _ => None,
+        }
+    }
+
+    pub fn get_type_name(&self) -> &'static str {
+        match &self.la_type {
+            LoopActionType::LoopEntry {
+                count: _,
+                entry_type,
+            } => match entry_type {
+                LoopEntryType::Exceed => "LoopEntryExceed",
+                LoopEntryType::Hit => "LoopEntryHit",
+            },
+
+            LoopActionType::LoopEnd(end_type) => match end_type {
+                LoopEndType::NoStart => "LoopEndNoStart",
+                LoopEndType::Out { .. } => "LoopEndOut",
+            },
+        }
+    }
+}
+
+impl fmt::Debug for LoopAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let count_op = self.get_count();
+        match count_op {
+            Some(count) => {
+                write!(
+                    f,
+                    "{}(header_loc: {:?}, count: {})",
+                    self.get_type_name(),
+                    self.get_header_loc(),
+                    count
+                )
+            }
+            None => {
+                write!(
+                    f,
+                    "{}(header_loc: {:?})",
+                    self.get_type_name(),
+                    self.get_header_loc()
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum ExecAction {
     Func(FuncAction),
     Intra(IntraAction),
+    Loop(LoopAction),
 }
 
 impl fmt::Debug for ExecAction {
@@ -246,6 +435,7 @@ impl fmt::Debug for ExecAction {
         match self {
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
+            ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),
         }
     }
 }
@@ -437,6 +627,9 @@ impl ExecTree {
         if let Ok(intra_act) = IntraAction::parse_simple_guard(line) {
             return Ok((None, Some(ExecAction::Intra(intra_act))));
         }
+        if let Ok(loop_act) = LoopAction::from_line(line) {
+            return Ok((None, Some(ExecAction::Loop(loop_act))));
+        }
 
         // regular br parse
         if let Ok((value_hit, intra_act)) = Self::parse_regular_br_guard(line) {
@@ -491,7 +684,12 @@ impl ExecTree {
     //     Ok(ExecAction::Func(func_act))
     // }
 
-    pub fn read_line(&mut self, line: &str, cons: &Constraint, hit_cnt: &mut usize) -> Result<()> {
+    pub fn read_line(
+        &mut self,
+        line: &str,
+        cons_op: Option<&Constraint>,
+        hit_cnt: &mut usize,
+    ) -> Result<()> {
         let (value_hit_op, act_op) = self.parse_guard(line)?;
 
         if let Some(act) = act_op {
@@ -530,19 +728,29 @@ impl ExecTree {
             //     log::debug!("Value Hit: {:?}", val_hit);
             //     log::debug!("Constraint: {}", cons);
             // }
-            if is_debug_mode() && cons.near_hit(&val_hit) {
-                log::debug!("Value Hit: {:?}", val_hit);
-                log::debug!("Constraint: {}", cons);
-            }
-            if cons.is_hit(&val_hit)? {
-                *hit_cnt += 1;
+            if let Some(cons) = cons_op {
+                if is_debug_mode() && cons.near_hit(&val_hit) {
+                    log::debug!("Value Hit: {:?}", val_hit);
+                    log::debug!("Constraint: {}", cons);
+                }
+                if cons.is_hit(&val_hit)? {
+                    *hit_cnt += 1;
+                }
             }
         }
 
         Ok(())
     }
 
-    pub fn from_guard_file(fs_path: &Path, cons: &Constraint) -> Result<Self> {
+    pub fn from_guard_file<P: AsRef<Path>>(fs_path: P, cons: &Constraint) -> Result<Self> {
+        Self::from_guard_file_impl(fs_path.as_ref(), Some(cons))
+    }
+
+    pub fn from_guard_file_wo_constraint<P: AsRef<Path>>(fs_path: P) -> Result<Self> {
+        Self::from_guard_file_impl(fs_path.as_ref(), None)
+    }
+
+    pub fn from_guard_file_impl(fs_path: &Path, cons_op: Option<&Constraint>) -> Result<Self> {
         let mut exec_tree: ExecTree = ExecTree::new();
 
         let file = File::open(fs_path)?;
@@ -552,7 +760,7 @@ impl ExecTree {
             log::info!("Processing line {}: {}", idx + 1, fs_path.display());
             let line = line_res?;
             // let exec_act = ExecAction::from_line(&line)?;
-            exec_tree.read_line(&line, cons, &mut hit_cnt)?;
+            exec_tree.read_line(&line, cons_op, &mut hit_cnt)?;
 
             if hit_cnt >= get_trunc_cnt() {
                 break;
@@ -560,6 +768,10 @@ impl ExecTree {
         }
 
         Ok(exec_tree)
+    }
+
+    pub fn to_dot_png<P: AsRef<Path>>(&self, png_path: P) -> Result<()> {
+        todo!()
     }
 }
 

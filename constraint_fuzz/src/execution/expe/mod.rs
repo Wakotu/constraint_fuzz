@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_expe_run() -> Result<()> {
-        setup_test_run_entry("libaom", false)?;
+        setup_test_run_entry("libaom", true)?;
         let deopt = Deopt::new("libaom")?;
         let executor = Executor::new(&deopt)?;
         executor.run_expe("/struct_fuzz/constraint_fuzz/examples/libaom/example_fuzzer.cc")?;

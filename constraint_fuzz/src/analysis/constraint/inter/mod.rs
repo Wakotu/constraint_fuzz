@@ -85,9 +85,9 @@ impl ExecRec {
         // create coverage directory
         let cov_dir = Self::get_exec_cov_dir(work_dir)?;
         // create func stack directory
-        let fs_dir = Self::get_exec_guard_dir(work_dir)?;
+        let guard_dir = Self::get_exec_guard_dir(work_dir)?;
 
-        Ok((fs_dir, cov_dir))
+        Ok((guard_dir, cov_dir))
     }
 
     pub fn get_exec_list_from_work_dir(work_dir: &Path) -> Result<Vec<Self>> {
@@ -380,6 +380,17 @@ mod tests {
             // log::debug!("Function chain for {}: {:?}", exec.exec_name, chain_list);
             res_chain_list.extend(tree_list);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_exec_tree_visualization() -> Result<()> {
+        setup_test_run_entry("libaom", true)?;
+        let tree = ExecTree::from_guard_file_wo_constraint(
+            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-02 21:45:27/exec_recs/guards/f2d15cd4135c693af2edcc722ae40c83/139809220690112_main",
+        )?;
+        tree.to_dot_png("/struct_fuzz/test_exec_tree.png")?;
+
         Ok(())
     }
 

@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::{
     path::PathBuf,
     time::{self, Instant},
@@ -11,10 +12,25 @@ use regex::{Captures, Regex};
 pub enum ProgramError {
     Syntax(String),
     Link(String),
+    Timeout(String),
     Execute(String),
     Fuzzer(String),
     Coverage(String),
     Hang(String),
+}
+
+impl Display for ProgramError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProgramError::Syntax(msg) => write!(f, "Syntax Error: {}", msg),
+            ProgramError::Link(msg) => write!(f, "Link Error: {}", msg),
+            ProgramError::Timeout(msg) => write!(f, "Timeout Error: {}", msg),
+            ProgramError::Execute(msg) => write!(f, "Execute Error: {}", msg),
+            ProgramError::Fuzzer(msg) => write!(f, "Fuzzer Error: {}", msg),
+            ProgramError::Coverage(msg) => write!(f, "Coverage Error: {}", msg),
+            ProgramError::Hang(msg) => write!(f, "Executed Hang!: {}", msg),
+        }
+    }
 }
 
 impl ProgramError {
@@ -22,6 +38,7 @@ impl ProgramError {
         match self {
             ProgramError::Syntax(msg) => format!("\nSyntax Error: \n{msg}"),
             ProgramError::Link(msg) => format!("\nLink Error: \n{msg}"),
+            ProgramError::Timeout(msg) => format!("\nTimeout Error: \n{msg}"),
             ProgramError::Execute(msg) => format!("\nExecute Error: \n{msg}"),
             ProgramError::Fuzzer(msg) => format!("\nFuzzer Error: \n{msg}"),
             ProgramError::Coverage(msg) => format!("\nCoverage Error: \n{msg}"),
@@ -169,6 +186,9 @@ impl ProgramLogger {
         self.rc.total += 1;
         self.gc.total += 1;
         match err_msg {
+            ProgramError::Timeout(msg) => {
+                unimplemented!("Timeout error is not supported yet! {msg}");
+            }
             ProgramError::Syntax(_) => {
                 self.rc.syntax += 1;
                 self.gc.syntax += 1;

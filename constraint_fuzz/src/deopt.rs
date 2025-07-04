@@ -616,6 +616,7 @@ impl Deopt {
 
         let save_dir: PathBuf = match err_msg {
             ProgramError::Syntax(_) => [save_dir.clone(), "syntax".into()].iter().collect(),
+            ProgramError::Timeout(_) => [save_dir.clone(), "timeout".into()].iter().collect(),
             ProgramError::Link(_) => [save_dir.clone(), "link".into()].iter().collect(),
             ProgramError::Execute(_) => [save_dir.clone(), "execute".into()].iter().collect(),
             ProgramError::Fuzzer(_) => [save_dir.clone(), "fuzzer".into()].iter().collect(),
@@ -696,8 +697,6 @@ pub mod utils {
     use walkdir::WalkDir;
 
     use super::*;
-
-    
 
     pub fn deduplicate_unordered<T: Eq + std::hash::Hash + Clone>(vec: &mut Vec<T>) {
         let mut seen = HashSet::new();

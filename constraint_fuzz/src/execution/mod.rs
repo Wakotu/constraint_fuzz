@@ -9,12 +9,16 @@ pub mod sanitize;
 use self::logger::ProgramError;
 use crate::analysis::constraint::inter::ExecRec;
 use crate::ast::utils::show_cmd_args;
-use crate::config::{get_config, get_func_pass_lib_dir, get_minimize_compile_flag};
+use crate::config::{
+    get_config, get_func_pass_lib_dir, get_fuzz_time_out_as_secs, get_info_coll_execs,
+    get_minimize_compile_flag, is_debug_mode,
+};
 use crate::deopt::utils::{
     create_dir_if_nonexist, get_basename_str_from_path, get_file_parent_dir,
 };
 use crate::program::libfuzzer::respawn_libfuzzer_process;
 use crate::program::transform::Transformer;
+use crate::program::Program;
 use crate::{
     config::{self, get_library_name},
     deopt::utils::get_file_dirname,
@@ -28,6 +32,7 @@ use regex::Regex;
 use std::env::{self, VarError};
 use std::ffi::OsString;
 use std::process::ChildStderr;
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::channel,
@@ -140,7 +145,7 @@ impl Executor {
 
         log::debug!("compile kind: {kind:?}");
         show_cmd_args(cmd, "Fuzzer compile");
-
+        //
         let output = cmd
             .output()
             .expect("failed to execute the syntax check process");
@@ -347,6 +352,15 @@ impl Executor {
                     }
                 }
             }
+
+            if is_debug_mode() && cost_time >= get_fuzz_time_out_as_secs() {
+                log::info!(
+                    "Debug mode: fuzzer stop after {} seconds.",
+                    get_fuzz_time_out_as_secs()
+                );
+                should_break = true;
+            }
+
             match child.try_wait() {
                 Ok(Some(_status)) => {
                     let err_msg = std::fs::read_to_string(log_file)?;
@@ -369,7 +383,7 @@ impl Executor {
         }
     }
 
-    fn get_isntru_extra_env(
+    fn get_instru_extra_env(
         profraw: &Path,
         case_fs_dir: &Path,
     ) -> Result<Vec<(&'static OsStr, OsString)>> {
@@ -405,10 +419,10 @@ impl Executor {
         fuzzer_binary: &Path,
         case: &Path,
         profraw: &Path,
-        case_fs_dir: &Path,
+        case_guard_dir: &Path,
         case_cov: &Path,
-    ) -> Result<()> {
-        let extra_envs = Self::get_isntru_extra_env(profraw, case_fs_dir)?;
+    ) -> Result<Option<ProgramError>> {
+        let extra_envs = Self::get_instru_extra_env(profraw, case_guard_dir)?;
         let extra_args = vec![case.as_os_str()];
 
         let mut child = self.spawn(fuzzer_binary, extra_args, extra_envs, None, None, false);
@@ -422,22 +436,61 @@ impl Executor {
         log::debug!("COV RUN: execution for {} spawned", case_name);
 
         let timeout = std::time::Duration::from_secs(crate::config::EXECUTION_TIMEOUT);
-        let status = match child.wait_timeout(timeout).unwrap() {
+        let mut is_timeout = false;
+
+        let status = match child.wait_timeout(timeout)? {
             Some(status) => status.code(),
             None => {
                 child.kill().unwrap();
+                is_timeout = true;
                 child.wait().unwrap().code()
             }
         };
+
         if !is_exit_normally(status) {
-            log::warn!("execute fuzz_cov failed! {fuzzer_binary:?}, {case:?}");
+            if is_timeout {
+                log::warn!("execute fuzz_cov TIMEOUT! {fuzzer_binary:?}, {case:?}");
+            } else {
+                log::warn!("execute fuzz_cov FAILED! {fuzzer_binary:?}, {case:?}");
+            }
             if let Some(err) = child.stderr.take() {
                 let err_msg = get_child_err(err);
-                log::error!("Error: {err_msg}");
+                // note that stderr output here was output of libfuzzer
+                if !is_timeout {
+                    log::error!("LibFuzzer stderr: {err_msg}");
+                }
+
+                // distinguish timeout error from other errors
+                let err = Self::get_cov_exec_err(is_timeout, fuzzer_binary, case, profraw);
+                return Ok(Some(err));
             }
+            // remove profraw file if execution failed
+            if profraw.exists() {
+                std::fs::remove_file(profraw)?;
+            }
+
+            let err = Self::get_cov_exec_err(is_timeout, fuzzer_binary, case, profraw);
+            return Ok(Some(err));
         }
         self.gen_and_save_case_cov(profraw, case_cov)?;
-        Ok(())
+        Ok(None)
+    }
+
+    fn get_cov_exec_err(
+        timeout: bool,
+        fuzzer_binary: &Path,
+        case: &Path,
+        profraw: &Path,
+    ) -> ProgramError {
+        if timeout {
+            ProgramError::Timeout(format!(
+                "execute fuzz_cov TIMEOUT! {fuzzer_binary:?}, {case:?}, profraw: {profraw:?}"
+            ))
+        } else {
+            ProgramError::Execute(format!(
+                "execute fuzz_cov FAILED! {fuzzer_binary:?}, {case:?}, profraw: {profraw:?}"
+            ))
+        }
     }
 
     pub fn gen_and_save_case_cov(&self, profraw: &Path, case_cov: &Path) -> Result<()> {
@@ -456,6 +509,7 @@ impl Executor {
         corpus_files.concat()
     }
 
+    /// returns (exec_guard_dir, exec_cov_dir)
     fn setup_exec_msg_dir(fuzzer: &Path) -> Result<(PathBuf, PathBuf)> {
         let work_dir = get_file_parent_dir(fuzzer);
         ExecRec::setup_exec_dir(work_dir)
@@ -475,7 +529,7 @@ impl Executor {
         crate::deopt::utils::create_dir_if_nonexist(&profraw_dir)?;
 
         // setup execution msg dir
-        let (func_sta_dir, exec_cov_dir) = Self::setup_exec_msg_dir(fuzzer_binary)?;
+        let (exec_guard_dir, exec_cov_dir) = Self::setup_exec_msg_dir(fuzzer_binary)?;
 
         // collect corpuse cases
         let corpus_files = Self::collect_corpus_cases(corpus_dirs);
@@ -484,10 +538,19 @@ impl Executor {
         let cpu_count = max_cpu_count();
         let pool = ThreadPool::new(cpu_count);
 
+        let err_execs = Arc::new(Mutex::new(Vec::<ProgramError>::new()));
+
+        let exec_num = if corpus_files.len() < get_info_coll_execs() {
+            corpus_files.len()
+        } else {
+            get_info_coll_execs()
+        };
+
         // concurrent executio for each corpus case
-        for (id, case_file) in corpus_files.iter().enumerate() {
+        for (idx, case_file) in corpus_files.iter().take(get_info_coll_execs()).enumerate() {
             let binary = fuzzer_binary.to_path_buf();
             let case_file = case_file.to_path_buf();
+            assert!(case_file.is_file(), "case_file should be a file");
             let exec_name = get_exec_name_from_case_path(&case_file)?;
             // let rec_name = get_basename_str_from_path(&case_file)?;
             let profraw_file: PathBuf = [
@@ -496,26 +559,84 @@ impl Executor {
             ]
             .iter()
             .collect();
-            let len = corpus_files.len();
+            // let len = corpus_files.len();
             let executor = self.clone();
 
-            let case_fs_dir = func_sta_dir.join(&exec_name);
-            create_dir_if_nonexist(&case_fs_dir)?;
+            let case_guard_dir = exec_guard_dir.join(&exec_name);
+            create_dir_if_nonexist(&case_guard_dir)?;
             let case_cov = exec_cov_dir.join(&exec_name);
 
+            let err_execs_ptr = err_execs.clone();
+
             pool.execute(move || {
-                executor
-                    .execute_cov_fuzzer(&binary, &case_file, &profraw_file, &case_fs_dir, &case_cov)
+                let err_op = executor
+                    .execute_cov_fuzzer(
+                        &binary,
+                        &case_file,
+                        &profraw_file,
+                        &case_guard_dir,
+                        &case_cov,
+                    )
                     .unwrap();
-                log::trace!("execute fuzz_cov on corpus finished {id}/{}", len);
+                if let Some(err) = err_op {
+                    err_execs_ptr.lock().unwrap().push(err);
+                }
+                log::debug!("execute fuzz_cov on case {}/{} finished", idx + 1, exec_num);
             });
         }
         pool.join();
+
+        log::info!("All cov executions done");
+        // error execution summary
+        let err_execs_data = err_execs.lock().unwrap();
+        Self::cov_exec_error_summary(&err_execs_data, err_execs_data.len(), exec_num);
 
         let profraws = crate::deopt::utils::read_all_files_in_dir(&profraw_dir)?;
         Self::merge_profdata(&profraws, profdata)?;
         std::fs::remove_dir_all(profraw_dir)?;
         Ok(())
+    }
+
+    fn cov_exec_error_summary(err_execs: &[ProgramError], err_num: usize, exec_num: usize) {
+        if !err_execs.is_empty() {
+            let mut fa_exec: u32 = 0;
+            let mut to_exec: u32 = 0;
+            for err_exec in err_execs.iter() {
+                match err_exec {
+                    ProgramError::Execute(_) => {
+                        fa_exec += 1;
+                    }
+                    ProgramError::Timeout(_) => {
+                        to_exec += 1;
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
+            }
+
+            log::warn!(
+                "Error execs: {}/{}, FAILED: {}, TIMEOUT: {}",
+                err_num,
+                exec_num,
+                fa_exec,
+                to_exec
+            );
+
+            for err_exec in err_execs.iter() {
+                match err_exec {
+                    ProgramError::Timeout(_) => {
+                        continue;
+                    }
+                    ProgramError::Execute(msg) => {
+                        log::warn!("{}", msg);
+                    }
+                    _ => {
+                        log::error!("{}", err_exec);
+                    }
+                }
+            }
+        }
     }
 
     // export

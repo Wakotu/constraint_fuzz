@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <stack>
 #include <string>
@@ -39,10 +40,28 @@ void __attribute__((constructor)) setup_sig_handler() {
   signal(SIGINT, sig_handler);
 }
 
+/**
+  Loop Context Implementation
+*/
+
 using LoopEntry =
     std::pair<std::string, std::size_t>; // loop location and count
 
-static std::stack<LoopEntry> loop_stack;
+using LoopStack = std::stack<LoopEntry>;
+// static std::stack<LoopEntry> loop_stack;
+
+std::map<Tid, LoopStack> loop_stack_map;
+
+LoopStack &get_loop_stack() {
+  Tid tid = std::this_thread::get_id();
+  auto it = loop_stack_map.find(tid);
+  if (it != loop_stack_map.end()) {
+    return it->second;
+  }
+  // create a new stack for this thread
+  LoopStack &new_stack = loop_stack_map[tid];
+  return new_stack;
+}
 
 std::ofstream &create_of(const Tid &tid) {
   // std::cerr << "creating fp\n";
@@ -138,6 +157,7 @@ void push_func(const char *func_name) {
 }
 
 bool exceed_loop_limit() {
+  LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
     return false;
   }
@@ -158,16 +178,12 @@ void print_rec_to_file_with_loop_guard(const char *rec) {
   print_rec_to_file(rec);
 }
 
-/**
-  Loop Context Implementation
-*/
-
 void loop_hit(const char *loop_loc) {
+  LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
     // if the stack is empty, push a new entry
     LoopEntry lent{loop_loc, 1};
     loop_stack.push(lent);
-    std::stringstream ss;
     return;
   }
 
@@ -176,9 +192,15 @@ void loop_hit(const char *loop_loc) {
     // increment the count
     cur.second++;
     auto cnt = cur.second;
-    if (cnt - LOOP_LIMIT == 1) {
+    if (cnt <= LOOP_LIMIT) {
+      // Loop Entry Hit
       std::stringstream ss;
-      ss << "Loop Limit Exceed: " << loop_loc << " at count: " << cnt;
+      ss << "Loop Hit: " << loop_loc << " at count " << cnt;
+      print_rec_to_file(ss.str().c_str());
+    } else if (cnt - LOOP_LIMIT == 1) {
+      // Loop Entry Exceed
+      std::stringstream ss;
+      ss << "Loop Limit Exceed: " << loop_loc << " at count:" << cnt;
       print_rec_to_file(ss.str().c_str());
     }
   } else {
@@ -189,20 +211,30 @@ void loop_hit(const char *loop_loc) {
 }
 
 void loop_end(const char *loop_loc) {
-  assert(!loop_stack.empty() && "Loop stack is empty");
+  LoopStack &loop_stack = get_loop_stack();
+  if (loop_stack.empty()) {
+    // if the stack is empty, this is an error
+    std::stringstream ss;
+    ss << "Loop end without loop start: " << loop_loc;
+    print_rec_to_file(ss.str().c_str());
+    return;
+  }
+  // consider reasonable to be hit without passing loop entry
   auto &cur = loop_stack.top();
   if (cur.first == loop_loc) {
     loop_stack.pop();
+    // Loop End Out
     std::stringstream ss;
-    ss << "Out of Loop: " << loop_loc << " at count: " << cur.second;
+    ss << "Out of Loop: " << loop_loc << " at count " << cur.second;
     print_rec_to_file(ss.str().c_str());
   } else {
-    std::cerr << "Error: Loop end called for a different loop location: "
-              << loop_loc << " vs " << cur.first << "\n";
-    std::exit(1);
+    // this is an error, loop end without loop start
+    // Loop End Without Start
+    std::stringstream ss;
+    ss << "Loop end without loop start: " << loop_loc;
+    print_rec_to_file(ss.str().c_str());
   }
 }
-
 // static std::unordered_map<std::size_t, unsigned int> loop_counter;
 
 // unsigned int get_loop_count(const SrcLoc &loc) {
