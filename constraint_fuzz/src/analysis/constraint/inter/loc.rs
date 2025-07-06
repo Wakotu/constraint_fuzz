@@ -5,9 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::feedback::{
-    branches::constraints::{Constraint, Loc, LocTrait, Range, RangeTrait},
-    clang_coverage::{BranchCount, CovBranch, CovFunction},
+use crate::{
+    analysis::constraint::inter::error::GuardParseError,
+    feedback::{
+        branches::constraints::{Constraint, Loc, LocTrait, Range, RangeTrait},
+        clang_coverage::{BranchCount, CovBranch, CovFunction},
+    },
 };
 
 #[derive(Clone)]
@@ -86,13 +89,20 @@ impl SrcLoc {
         Ok(sloc.is_less_equal(&loc) && loc.is_less_equal(&eloc))
     }
 
-    pub fn parse_line_with_prefix(line: &str, prefix: &str) -> Result<Self> {
+    pub fn parse_line_with_prefix(
+        line: &str,
+        prefix: &str,
+    ) -> std::result::Result<Self, GuardParseError> {
         if !line.starts_with(prefix) {
-            bail!("Line does not start with expected prefix: {}", line);
+            return Err(GuardParseError::to_prefix_err(eyre::eyre!(
+                "Line does not start with expected prefix: {}",
+                prefix
+            )));
         }
 
         let loc_str = &line[prefix.len()..].trim();
-        Self::from_str(loc_str)
+        let res = Self::from_str(loc_str)?;
+        Ok(res)
     }
 
     pub fn from_str(s: &str) -> Result<Self> {

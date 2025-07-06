@@ -703,10 +703,27 @@ pub mod utils {
         vec.retain(|x| seen.insert(x.clone())); // Retain only if insertion into HashSet is new
     }
 
-    // time related
+    /**
+     * time related
+     */
     pub fn get_formatted_time() -> String {
         let now = Local::now();
         now.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+
+    pub fn timer_it<F>(func: F, proc_name: &str)
+    where
+        F: FnOnce(),
+    {
+        let start = std::time::Instant::now();
+        func();
+        let duration = start.elapsed();
+        log::info!(
+            "{} elapsed: {}.{:03} seconds",
+            proc_name,
+            duration.as_secs(),
+            duration.subsec_millis()
+        );
     }
 
     /**

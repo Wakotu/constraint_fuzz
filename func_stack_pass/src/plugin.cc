@@ -653,16 +653,16 @@ using LoopList = std::vector<Loop *>;
 
 LoopList collect_loop_instr_recur(Loop *L) {
   LoopList loops = {L};
-  errs() << GREEN << "[Loop Instrument] " << RESET
-         << "Collecting loop: " << L->getHeader()->getName() << "\n";
+  // errs() << GREEN << "[Loop Instrument] " << RESET
+  //        << "Collecting loop: " << L->getHeader()->getName() << "\n";
 
   for (Loop *sub_loop : L->getSubLoops()) {
-    errs() << GREEN << "[Loop Instrument] " << RESET
-           << "Collecting sub-loop: " << sub_loop->getHeader()->getName()
-           << "\n";
+    // errs() << GREEN << "[Loop Instrument] " << RESET
+    //        << "Collecting sub-loop: " << sub_loop->getHeader()->getName()
+    //        << "\n";
     LoopList sub_loops = collect_loop_instr_recur(sub_loop);
-    errs() << GREEN << "[Loop Instrument] " << RESET << "Collected "
-           << sub_loops.size() << " sub-loops, inserting.\n";
+    // errs() << GREEN << "[Loop Instrument] " << RESET << "Collected "
+    //        << sub_loops.size() << " sub-loops, inserting.\n";
     loops.insert(loops.end(), sub_loops.begin(), sub_loops.end());
   }
   return loops;

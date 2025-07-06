@@ -32,6 +32,7 @@ use regex::Regex;
 use std::env::{self, VarError};
 use std::ffi::OsString;
 use std::process::ChildStderr;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -539,6 +540,7 @@ impl Executor {
         let pool = ThreadPool::new(cpu_count);
 
         let err_execs = Arc::new(Mutex::new(Vec::<ProgramError>::new()));
+        let fin_counter = Arc::new(AtomicUsize::new(0));
 
         let exec_num = if corpus_files.len() < get_info_coll_execs() {
             corpus_files.len()
@@ -547,7 +549,7 @@ impl Executor {
         };
 
         // concurrent executio for each corpus case
-        for (idx, case_file) in corpus_files.iter().take(get_info_coll_execs()).enumerate() {
+        for (_, case_file) in corpus_files.iter().take(get_info_coll_execs()).enumerate() {
             let binary = fuzzer_binary.to_path_buf();
             let case_file = case_file.to_path_buf();
             assert!(case_file.is_file(), "case_file should be a file");
@@ -567,6 +569,7 @@ impl Executor {
             let case_cov = exec_cov_dir.join(&exec_name);
 
             let err_execs_ptr = err_execs.clone();
+            let counter = fin_counter.clone();
 
             pool.execute(move || {
                 let err_op = executor
@@ -581,7 +584,16 @@ impl Executor {
                 if let Some(err) = err_op {
                     err_execs_ptr.lock().unwrap().push(err);
                 }
-                log::debug!("execute fuzz_cov on case {}/{} finished", idx + 1, exec_num);
+                let count = counter.fetch_add(1, Ordering::Relaxed);
+
+                let case_name = match get_basename_str_from_path(&case_file) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        panic!("Failed to get case name: {e}");
+                    }
+                };
+                log::debug!("COV RUN: execution for {} finished", case_name);
+                log::debug!("{}/{} fuzz_cov executions finished", count + 1, exec_num);
             });
         }
         pool.join();

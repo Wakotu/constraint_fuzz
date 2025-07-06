@@ -32,7 +32,7 @@ impl Executor {
     pub fn build_expe_fuzzer(&self, program_path: &Path, work_dir: &Path) -> Result<()> {
         log::trace!("build expe fuzzer: {program_path:?}");
 
-        let time_logger = TimeUsage::new(work_dir.to_owned());
+        let time_logger = TimeUsage::new(&work_dir);
         // let mut transformer = Transformer::new(program_path, &self.deopt)?;
         //
         // transformer.add_fd_sanitizer()?;
@@ -51,7 +51,7 @@ impl Executor {
     pub fn run_expe_fuzzer(&self, work_dir: &Path, corpus_dirs: &[&Path]) -> Result<()> {
         let fuzzer = self.deopt.get_expe_fuzzer_path(work_dir)?;
         log::trace!("run expe fuzzer: {fuzzer:?}");
-        let time_logger = TimeUsage::new(work_dir.to_owned());
+        let time_logger = TimeUsage::new(&work_dir);
 
         let res = self.execute_fuzzer(&fuzzer, corpus_dirs);
         time_logger.log("expe fuzz")?;
@@ -121,7 +121,7 @@ impl Executor {
         corpus_dirs: &[&Path],
     ) -> Result<()> {
         log::info!("Expe cov procedure started");
-        let time_logger = TimeUsage::new(work_dir.to_owned());
+        let time_logger = TimeUsage::new(&work_dir);
 
         // build cov_fuzzer
         let cov_fuzzer = self.deopt.get_expe_cov_fuzzer_path(work_dir)?;

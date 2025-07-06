@@ -63,6 +63,7 @@ impl Executor {
         let profdata = self.get_cov_profdata(cov_fuzzer, corpus_dirs)?;
 
         // collect contraints from cov data
+        log::info!("Collecting constraints from coverage data...");
         let cov = self.get_code_cov_from_profdata(cov_fuzzer, fuzzer_src, &profdata)?;
         self.extract_cons_from_cov(cov, work_dir)?;
         Ok(())

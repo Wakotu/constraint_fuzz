@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::path::Path;
 use std::{
     path::PathBuf,
     time::{self, Instant},
@@ -333,8 +334,8 @@ pub struct TimeUsage {
 }
 
 impl TimeUsage {
-    pub fn new(dir: PathBuf) -> Self {
-        let mut dir = dir.clone();
+    pub fn new<P: AsRef<Path>>(dir: P) -> Self {
+        let mut dir = dir.as_ref().to_owned();
         dir.push("time_usage");
         crate::deopt::utils::create_dir_if_nonexist(&dir)
             .unwrap_or_else(|_| panic!("create dir failed! {dir:?}"));
@@ -351,7 +352,7 @@ impl TimeUsage {
         save_path
     }
 
-    pub fn log(&self, ty: &str) -> eyre::Result<()> {
+    pub fn log(&self, ty: &str) -> eyre::Result<f32> {
         let usage = time::Instant::elapsed(&self.start).as_secs_f32();
         let save_path = self.get_ty_usage_file(ty);
         let mut file = std::fs::OpenOptions::new()
@@ -359,7 +360,7 @@ impl TimeUsage {
             .append(true)
             .open(save_path)?;
         std::io::Write::write_fmt(&mut file, format_args!("{}", usage))?;
-        Ok(())
+        Ok(usage)
     }
 
     pub fn load(&self, ty: &str) -> eyre::Result<f32> {

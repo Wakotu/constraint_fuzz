@@ -195,7 +195,7 @@ pub fn parse_config() -> Result<()> {
 }
 
 
-use clap::{builder::Str, Parser, ValueEnum};
+use clap::{ Parser, ValueEnum};
 
 use crate::Deopt;
 /// Simple program to greet a person
@@ -208,7 +208,7 @@ pub struct Config {
     #[arg(short, long, default_value_t = false)]
     pub debug_mode: bool,
     /// Number of minutes to run the fuzzer, default is 10 minutes.
-    #[arg(short, long, default_value_t = 2)]
+    #[arg(short, long, default_value_t = 1)]
     pub fuzz_time_out: u64,
     /// Execution numbers during runtime information collection
     #[arg(short, long, default_value_t = 100)]
@@ -262,7 +262,7 @@ impl Config {
             target: target_proj.to_string(),
             debug_mode: debug_mode,
             info_coll_execs: 100,
-            fuzz_time_out: 2,
+            fuzz_time_out: 1,
             trunc_cnt: 2,
             generative: LLMModel::ChatGPT,
             infill: LLMModel::ChatGPT,

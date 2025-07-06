@@ -8,8 +8,10 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use crate::analysis::constraint::inter::error::{handle_guard_err_result, GuardParseError};
 use crate::analysis::constraint::inter::loc::SrcLoc;
 use crate::config::is_debug_mode;
+use crate::execution::logger::TimeUsage;
 use crate::{
     config::get_trunc_cnt,
     feedback::branches::constraints::{Constraint, LocTrait, Range, RangeTrait},
@@ -22,13 +24,16 @@ const NODE_DELIM: &str = ", ";
 
 /// Get the prefix of a line, which is the substring from the start to the first occurrence of ':'.
 /// Contains `:` at the end.
-fn get_prefix(line: &str) -> Result<&str> {
+fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
     // get position of ':' in the line
     if let Some(pos) = line.find(':') {
         // return the substring from the start to the position of ':'
         Ok(&line[..pos + 1])
     } else {
-        bail!("Line does not contain a colon: {}", line);
+        Err(GuardParseError::to_prefix_err(eyre::eyre!(
+            "Line does not contain a colon: {}",
+            line
+        )))
     }
 }
 
@@ -174,10 +179,14 @@ impl fmt::Debug for IntraAction {
 }
 
 impl IntraAction {
-    pub fn parse_simple_guard(line: &str) -> Result<Self> {
+    pub fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
-        let intra_type = IntraActionType::from_prefix(prefix)
-            .ok_or_else(|| eyre::eyre!("Unknown intra action type prefix: {}", prefix))?;
+        let intra_type = IntraActionType::from_prefix(prefix).ok_or_else(|| {
+            GuardParseError::to_prefix_err(eyre::eyre!(
+                "Unknown intra action type prefix: {}",
+                prefix
+            ))
+        })?;
 
         let line_cont = line[prefix.len()..].trim();
         let mut iter = line_cont.split_whitespace();
@@ -192,7 +201,12 @@ impl IntraAction {
         let cond_val = match cond_val_str {
             "1" => true,
             "0" => false,
-            _ => bail!("Unexpected condition value: {}", cond_val_str),
+            _ => {
+                return Err(GuardParseError::from(eyre::eyre!(
+                    "Unexpected condition value: {}",
+                    cond_val_str
+                )));
+            }
         };
         let dest_loc_str = iter
             .next()
@@ -237,36 +251,10 @@ enum LoopEntryType {
     Exceed,
 }
 
-impl LoopEntryType {
-    const HIT_PREFIX: &'static str = "Loop Hit:";
-    const EXCEED_PREFIX: &'static str = "Loop Limit Exceed:";
-
-    pub fn parse_prefix(prefix: &str) -> Result<usize> {
-        match prefix {
-            Self::HIT_PREFIX => Ok(Self::HIT_PREFIX.len()),
-            Self::EXCEED_PREFIX => Ok(Self::EXCEED_PREFIX.len()),
-            _ => bail!("Unknown loop entry type prefix: {}", prefix),
-        }
-    }
-}
-
 #[derive(Clone)]
 enum LoopEndType {
     Out { count: usize },
     NoStart,
-}
-
-impl LoopEndType {
-    const OUT_PREFIX: &'static str = "Out of Loop:";
-    const NO_START_PREFIX: &'static str = "Loop end without loop start:";
-
-    pub fn parse_prefix(prefix: &str) -> Result<usize> {
-        match prefix {
-            Self::OUT_PREFIX => Ok(Self::OUT_PREFIX.len()),
-            Self::NO_START_PREFIX => Ok(Self::NO_START_PREFIX.len()),
-            _ => bail!("Unknown loop end type prefix: {}", prefix),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -327,7 +315,7 @@ impl LoopAction {
         SrcLoc::from_str(content_slice)
     }
 
-    pub fn from_line(line: &str) -> Result<Self> {
+    pub fn parse_loop_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
 
         if prefix.starts_with(Self::HIT_PREFIX) {
@@ -362,7 +350,10 @@ impl LoopAction {
             });
         }
 
-        bail!("Line does not match any known loop action format: {}", line);
+        Err(GuardParseError::to_prefix_err(eyre::eyre!(
+            "Line does not match any known loop action type: {}",
+            line
+        )))
     }
 
     pub fn get_header_loc(&self) -> &SrcLoc {
@@ -564,7 +555,7 @@ impl ValueHit {
     pub fn get_line(&self) -> Option<usize> {
         self.loc.get_line()
     }
-    pub fn parse_value_guard(line: &str) -> Result<ValueHit> {
+    pub fn parse_value_guard(line: &str) -> std::result::Result<ValueHit, GuardParseError> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
         let loc = SrcLoc::parse_line_with_prefix(line, VAL_PREFIX)?;
 
@@ -594,11 +585,16 @@ impl ExecTree {
         }
     }
 
-    fn parse_regular_br_guard(line: &str) -> Result<(ValueHit, IntraAction)> {
+    fn parse_regular_br_guard(
+        line: &str,
+    ) -> std::result::Result<(ValueHit, IntraAction), GuardParseError> {
         const REG_BR_PREFIX: &str = "Br Guard:";
         let prefix = get_prefix(line)?;
         if prefix != REG_BR_PREFIX {
-            bail!("Line does not match regular branch guard prefix: {}", line);
+            return Err(GuardParseError::to_prefix_err(eyre::eyre!(
+                "Line does not match regular branch guard prefix: {}",
+                line
+            )));
         }
 
         let line_cont = line[prefix.len()..].trim();
@@ -616,23 +612,28 @@ impl ExecTree {
         }
 
         // if line does not match any known action, return error
-        bail!("Line does not match any known action format: {}", line);
+        Err(GuardParseError::from(eyre::eyre!(
+            "Line does not match any known action format: {}",
+            line
+        )))
     }
 
     fn parse_guard(&self, line: &str) -> Result<(Option<ValueHit>, Option<ExecAction>)> {
         // handle simple guards
-        if let Ok(value_hit) = ValueHit::parse_value_guard(line) {
+        if let Some(value_hit) = handle_guard_err_result(ValueHit::parse_value_guard(line))? {
             return Ok((Some(value_hit), None));
         }
-        if let Ok(intra_act) = IntraAction::parse_simple_guard(line) {
+        if let Some(intra_act) = handle_guard_err_result(IntraAction::parse_simple_guard(line))? {
             return Ok((None, Some(ExecAction::Intra(intra_act))));
         }
-        if let Ok(loop_act) = LoopAction::from_line(line) {
+        if let Some(loop_act) = handle_guard_err_result(LoopAction::parse_loop_guard(line))? {
             return Ok((None, Some(ExecAction::Loop(loop_act))));
         }
 
         // regular br parse
-        if let Ok((value_hit, intra_act)) = Self::parse_regular_br_guard(line) {
+        if let Some((value_hit, intra_act)) =
+            handle_guard_err_result(Self::parse_regular_br_guard(line))?
+        {
             return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act))));
         }
 
@@ -757,7 +758,7 @@ impl ExecTree {
         let reader = BufReader::new(file);
         let mut hit_cnt = 0;
         for (idx, line_res) in reader.lines().enumerate() {
-            log::info!("Processing line {}: {}", idx + 1, fs_path.display());
+            log::debug!("Processing line {}: {}", idx + 1, fs_path.display());
             let line = line_res?;
             // let exec_act = ExecAction::from_line(&line)?;
             exec_tree.read_line(&line, cons_op, &mut hit_cnt)?;

@@ -1,4 +1,4 @@
-use rayon::prelude::*;
+// use rayon::prelude::*;
 
 use std::fmt;
 
@@ -23,9 +23,9 @@ use color_eyre::eyre::Result;
 
 use super::RevIterSolver;
 
-pub mod tree;
-
+pub mod error;
 pub mod loc;
+pub mod tree;
 
 /**
  * This module is used to get function call chain from entry to constraints (inter-procedural analysis)
@@ -289,10 +289,12 @@ mod tests {
         io::{BufRead, BufReader},
     };
 
-    use base64::read;
     use eyre::bail;
 
-    use crate::{analysis::constraint::inter::tree::FuncActionType, setup_test_run_entry};
+    use crate::{
+        analysis::constraint::inter::tree::FuncActionType, deopt::utils::timer_it,
+        setup_test_run_entry,
+    };
 
     use super::*;
 
@@ -386,10 +388,15 @@ mod tests {
     #[test]
     fn test_exec_tree_visualization() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
-        let tree = ExecTree::from_guard_file_wo_constraint(
-            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-02 21:45:27/exec_recs/guards/f2d15cd4135c693af2edcc722ae40c83/139809220690112_main",
-        )?;
-        tree.to_dot_png("/struct_fuzz/test_exec_tree.png")?;
+        timer_it(
+            || {
+                let _tree = ExecTree::from_guard_file_wo_constraint(
+            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/6610b76b229c7bd437891575fe745799/140406869131456_main",
+        ).unwrap();
+            },
+            "Guard File Parsing",
+        );
+        // tree.to_dot_png("/struct_fuzz/test_exec_tree.png")?;
 
         Ok(())
     }

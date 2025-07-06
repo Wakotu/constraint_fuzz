@@ -181,14 +181,20 @@ void print_rec_to_file_with_loop_guard(const char *rec) {
 void loop_hit(const char *loop_loc) {
   LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
+    // hit at new loop without nesting
     // if the stack is empty, push a new entry
     LoopEntry lent{loop_loc, 1};
     loop_stack.push(lent);
+
+    std::stringstream ss;
+    ss << "Loop Hit: " << loop_loc << " at count " << 1;
+    print_rec_to_file(ss.str().c_str());
     return;
   }
 
   auto &cur = loop_stack.top();
   if (cur.first == loop_loc) {
+    // hit at current loop
     // increment the count
     cur.second++;
     auto cnt = cur.second;
@@ -200,13 +206,18 @@ void loop_hit(const char *loop_loc) {
     } else if (cnt - LOOP_LIMIT == 1) {
       // Loop Entry Exceed
       std::stringstream ss;
-      ss << "Loop Limit Exceed: " << loop_loc << " at count:" << cnt;
+      ss << "Loop Limit Exceed: " << loop_loc << " at count " << cnt;
       print_rec_to_file(ss.str().c_str());
     }
   } else {
+    // hit at nested loop
     // push a new entry
     LoopEntry lent{loop_loc, 1};
     loop_stack.push(lent);
+
+    std::stringstream ss;
+    ss << "Loop Hit: " << loop_loc << " at count " << 1;
+    print_rec_to_file(ss.str().c_str());
   }
 }
 
