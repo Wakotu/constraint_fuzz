@@ -23,6 +23,7 @@ use color_eyre::eyre::Result;
 
 use super::RevIterSolver;
 
+pub mod action;
 pub mod error;
 pub mod loc;
 pub mod tree;
@@ -292,7 +293,7 @@ mod tests {
     use eyre::bail;
 
     use crate::{
-        analysis::constraint::inter::tree::FuncActionType, deopt::utils::timer_it,
+        analysis::constraint::inter::action::FuncActionType, deopt::utils::timer_it,
         setup_test_run_entry,
     };
 

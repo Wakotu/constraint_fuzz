@@ -743,6 +743,15 @@ pub mod utils {
         Ok(buf)
     }
 
+    pub fn write_bytes_to_file<P: AsRef<Path>>(fpath: P, content: &[u8]) -> Result<()> {
+        let path = fpath.as_ref();
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        writer.write_all(content)?;
+        writer.flush()?;
+        Ok(())
+    }
+
     /// create the directory if it does not exist
     pub fn create_dir_if_nonexist(path: &Path) -> Result<()> {
         if !path.exists() {

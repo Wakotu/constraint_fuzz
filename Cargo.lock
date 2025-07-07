@@ -380,6 +380,7 @@ dependencies = [
  "color-eyre",
  "colored",
  "derive_builder",
+ "dot-writer",
  "eyre",
  "flexi_logger 0.25.6",
  "log",
@@ -645,6 +646,12 @@ checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
  "libloading",
 ]
+
+[[package]]
+name = "dot-writer"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2f7a508d3f95b7cb559acf2231c7efad02fe04061d3165b12513c2dbcc77af0"
 
 [[package]]
 name = "dwrote"
