@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::{loc::SrcRegion, tree::ExecTree},
+    analysis::constraint::inter::{exec_tree::ExecTree, loc::SrcRegion},
     config::is_debug_mode,
     deopt::utils::{
         buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path, get_parent_dir,
@@ -23,10 +23,9 @@ use color_eyre::eyre::Result;
 
 use super::RevIterSolver;
 
-pub mod action;
 pub mod error;
+pub mod exec_tree;
 pub mod loc;
-pub mod tree;
 
 /**
  * This module is used to get function call chain from entry to constraints (inter-procedural analysis)
@@ -293,7 +292,7 @@ mod tests {
     use eyre::bail;
 
     use crate::{
-        analysis::constraint::inter::action::FuncActionType, deopt::utils::timer_it,
+        analysis::constraint::inter::exec_tree::action::FuncActionType, deopt::utils::timer_it,
         setup_test_run_entry,
     };
 
@@ -389,15 +388,15 @@ mod tests {
     #[test]
     fn test_exec_tree_visualization() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
-        timer_it(
+        let tree = timer_it(
             || {
-                let _tree = ExecTree::from_guard_file_wo_constraint(
+                ExecTree::from_guard_file_wo_constraint(
             "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/6610b76b229c7bd437891575fe745799/140406869131456_main",
-        ).unwrap();
+        )
             },
             "Guard File Parsing",
-        );
-        // tree.to_dot_png("/struct_fuzz/test_exec_tree.png")?;
+        )?;
+        tree.to_dot_svg("/struct_fuzz/test_exec_tree.svg")?;
 
         Ok(())
     }

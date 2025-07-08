@@ -711,12 +711,12 @@ pub mod utils {
         now.format("%Y-%m-%d %H:%M:%S").to_string()
     }
 
-    pub fn timer_it<F>(func: F, proc_name: &str)
+    pub fn timer_it<F, T>(func: F, proc_name: &str) -> T
     where
-        F: FnOnce(),
+        F: FnOnce() -> T,
     {
         let start = std::time::Instant::now();
-        func();
+        let res = func();
         let duration = start.elapsed();
         log::info!(
             "{} elapsed: {}.{:03} seconds",
@@ -724,6 +724,7 @@ pub mod utils {
             duration.as_secs(),
             duration.subsec_millis()
         );
+        res
     }
 
     /**

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Zoomable Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@2.6.0/dist/svg-pan-zoom.min.js"></script>
+</head>
+
+<body>
+    <div style="width: 100%; height: 600px; border: 1px solid black;">
+        <object id="myGraph" type="image/svg+xml" data="test_exec_tree.svg" style="width: 100%; height: 100%;"></object>
+    </div>
+
+    <script>
+        document.getElementById('myGraph').addEventListener('load', function () {
+            svgPanZoom(this.contentDocument.documentElement, {
+                zoomEnabled: true,
+                panEnabled: true,
+                controlIconsEnabled: true // Shows +/-/reset buttons
+            });
+        });
+    </script>
+</body>
+
+</html>

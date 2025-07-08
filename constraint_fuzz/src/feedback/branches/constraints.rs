@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::{tree::ValueHit, ExecRec},
+    analysis::constraint::inter::{exec_tree::ValueHit, ExecRec},
     config::{get_config, is_debug_mode},
     execution::max_cpu_count,
     feedback::clang_coverage::{
