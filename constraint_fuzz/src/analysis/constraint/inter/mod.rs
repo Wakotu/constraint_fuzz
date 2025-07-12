@@ -386,17 +386,27 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_tree_visualization() -> Result<()> {
+    fn test_exec_tree_analyze() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
+        // 479w+ lines
+        // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/00cadb83512031af7f5c2d1a9ec4e552/139779446296768_main";
+        // 1w+ lines
+        // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/3effe625c2b16d1fae470b3a34a27a33/140367869948096_main";
+        // 120w+ lines
+        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/c6c027c60001d149db5f928f1d6252dc/139831438344384_main";
+
         let tree = timer_it(
-            || {
-                ExecTree::from_guard_file_wo_constraint(
-            "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/6610b76b229c7bd437891575fe745799/140406869131456_main",
-        )
-            },
+            || ExecTree::from_guard_file_wo_constraint(guard_fpath),
             "Guard File Parsing",
         )?;
-        tree.to_dot_svg("/struct_fuzz/test_exec_tree.svg")?;
+
+        // show metadata of the tree
+        log::info!("Tree depth: {}", tree.get_depth());
+        tree.show_long_func_nodes()?;
+        tree.show_recur_entries()?;
+        tree.show_most_called_funcs()?;
+
+        // tree.to_dot_svg("/struct_fuzz/test_exec_tree.svg")?;
 
         Ok(())
     }

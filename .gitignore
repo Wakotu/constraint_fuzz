@@ -6,3 +6,6 @@ pass_plugin/
 *.swp
 .trunk/
 exam_progs/
+
+test_exec_tree.svg
+test_exec_tree.dot

@@ -28,12 +28,22 @@ use crate::{
 pub mod action;
 pub mod analyze;
 
+pub trait FuncIter {
+    fn iter_sub_funcs(&self) -> SubFuncIter;
+}
+
 pub type SharedFuncNodePtr = Rc<RefCell<FuncNode>>;
 pub type WeakFuncNodePtr = Weak<RefCell<FuncNode>>;
 
 const NODE_DELIM: &str = ", ";
 
 pub static DOT_COUNTER: OnceLock<Mutex<usize>> = OnceLock::new();
+
+impl FuncIter for SharedFuncNodePtr {
+    fn iter_sub_funcs(&self) -> SubFuncIter {
+        SubFuncIter::from_func_ptr(self.clone())
+    }
+}
 
 pub fn incre_dot_counter() -> usize {
     let mut counter = DOT_COUNTER
@@ -52,10 +62,50 @@ pub enum FuncEntryType {
     Init,
     // regular function which has correponding function name
     Regular {
-        act_index: usize,
+        parent_idx: usize,
         name: String,
         parent: WeakFuncNodePtr,
     },
+}
+
+pub struct SubFuncIter {
+    parent_func_ptr: SharedFuncNodePtr,
+    cur_func_ptr: Option<SharedFuncNodePtr>,
+}
+
+impl SubFuncIter {
+    pub fn from_func_ptr(parent_func_ptr: SharedFuncNodePtr) -> Self {
+        Self {
+            parent_func_ptr,
+            cur_func_ptr: None,
+        }
+    }
+}
+
+impl Iterator for SubFuncIter {
+    type Item = SharedFuncNodePtr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let cur_idx = if let Some(cur_ptr) = &self.cur_func_ptr {
+            let cur_func = cur_ptr.borrow();
+            cur_func
+                .get_parent_idx()
+                .expect("Current function pointer should have a parent index")
+        } else {
+            0
+        };
+        let parent_func = self.parent_func_ptr.borrow();
+        for act in parent_func.iter_acts_at(cur_idx + 1) {
+            if let ExecAction::Func(func_act) = act {
+                // get child pointer
+                if let Some(child_ptr) = func_act.get_child_ptr() {
+                    self.cur_func_ptr = Some(child_ptr.clone());
+                    return Some(child_ptr.clone());
+                }
+            }
+        }
+        None
+    }
 }
 
 pub struct FuncNode {
@@ -71,7 +121,7 @@ impl fmt::Debug for FuncNode {
             FuncEntryType::Regular {
                 name,
                 parent: _,
-                act_index: _,
+                parent_idx: _,
             } => {
                 write!(f, "{} Node(", name)
             }
@@ -100,7 +150,7 @@ impl DotId for FuncNode {
             FuncEntryType::Regular {
                 ref name,
                 parent: _,
-                act_index: _,
+                parent_idx: _,
             } => {
                 // use function name as dot id
                 format!("{}_{}", name, cnt)
@@ -121,12 +171,19 @@ impl FuncNode {
         self.data.len()
     }
 
-    pub fn regular_node(name: String, parent: WeakFuncNodePtr, act_index: usize) -> Self {
+    pub fn get_parent_idx(&self) -> Option<usize> {
+        match &self.node_type {
+            FuncEntryType::Regular { parent_idx, .. } => Some(*parent_idx),
+            FuncEntryType::Init => None,
+        }
+    }
+
+    pub fn regular_node(name: String, parent: WeakFuncNodePtr, parent_idx: usize) -> Self {
         Self {
             node_type: FuncEntryType::Regular {
                 name,
                 parent,
-                act_index,
+                parent_idx,
             },
             data: vec![],
         }
@@ -134,6 +191,14 @@ impl FuncNode {
 
     pub fn iter_acts(&self) -> impl Iterator<Item = &ExecAction> {
         self.data.iter()
+    }
+
+    pub fn iter_acts_at(&self, start: usize) -> impl Iterator<Item = &ExecAction> {
+        self.data.iter().skip(start)
+    }
+
+    pub fn get_act_at(&self, idx: usize) -> Option<&ExecAction> {
+        self.data.get(idx)
     }
 
     /// Should only be used during construction of ExecTree
@@ -167,7 +232,7 @@ impl FuncNode {
         if let FuncEntryType::Regular {
             ref name,
             parent: _,
-            act_index: _,
+            parent_idx: _,
         } = self.node_type
         {
             Some(name)
@@ -180,7 +245,7 @@ impl FuncNode {
         if let Some(name) = self.get_func_name() {
             name
         } else {
-            "init"
+            "_init"
         }
     }
 
@@ -242,6 +307,10 @@ impl ExecTree {
             cur_depth: 0,
             max_depth: 0,
         }
+    }
+
+    pub fn get_root_ptr(&self) -> SharedFuncNodePtr {
+        self.root_ptr.clone()
     }
 
     pub fn get_depth(&self) -> usize {
