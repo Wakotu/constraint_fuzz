@@ -1,11 +1,13 @@
 #include "plugin.h"
 #include "utils.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include <cassert>
 #include <iostream>
 #include <llvm-19/llvm/ADT/StringRef.h>
 #include <llvm-19/llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm-19/llvm/Analysis/LoopInfo.h>
 #include <llvm-19/llvm/IR/Constant.h>
+#include <llvm-19/llvm/IR/InstrTypes.h>
 #include <llvm-19/llvm/IR/Value.h>
 #include <optional>
 #include <sstream>
@@ -82,34 +84,54 @@ FunctionCallee get_push_func_decl(Module &M) {
   return push_func_cl;
 }
 
-bool from_stdlib(const Function &f) {
-  if (auto *SP = f.getSubprogram()) {
-    std::string file_path = SP->getFile()->getFilename().str();
-    errs() << BLUE << "[Func Instrument] " << RESET
-           << "Function: " << f.getName() << " in " << file_path << "\n";
-    // NOTE: the filtering path may depend on the linux distros
-    bool flag = file_path.find("/usr/lib/gcc") != std::string::npos;
-    errs() << BLUE << "[Func Instrument] " << RESET << "Function "
-           << f.getName() << " " << (flag ? "skipped" : "instrumented") << "\n";
-    return flag;
+bool is_stdlib_function(StringRef func_name, Function &F,
+                        FunctionAnalysisManager &FAM) {
+  const llvm::TargetLibraryInfo &TLI =
+      FAM.getResult<llvm::TargetLibraryAnalysis>(F);
+  llvm::LibFunc FuncID;
+
+  if (TLI.getLibFunc(func_name, FuncID)) { // Check by Function*
+    errs() << YELLOW << "[Warning] " << RESET
+           << "Known StdLib function: " << func_name
+           << " (LibFunc ID: " << FuncID << ")\n";
+    return true;
   }
   return false;
 }
 
-bool should_skip_func(const Function &f) {
-  if (f.isDeclaration()) {
+bool from_stdlib(const Function *F) {
+  if (auto *SP = F->getSubprogram()) {
+    std::string file_path = SP->getFile()->getFilename().str();
+    errs() << BLUE << "[Func Location] " << RESET
+           << "Function: " << F->getName() << " in " << file_path << "\n";
+    // NOTE: the filtering path may depend on the linux distros
+    bool flag = file_path.find("/usr/lib/gcc") != std::string::npos;
+    errs() << BLUE << "[Func Location] " << RESET << "Function " << F->getName()
+           << " " << (flag ? "skipped" : "to instrument") << "\n";
+    return flag;
+  }
+  errs() << RED << "[Error] " << RESET
+         << "Function has no subprogram: " << F->getName() << "\n";
+  return false;
+}
+
+bool should_skip_func(Function &F, Module &M, ModuleAnalysisManager &MAM) {
+  if (F.isDeclaration() || F.isIntrinsic()) {
     return true;
   }
 
-  return from_stdlib(f);
+  FunctionAnalysisManager &FAM =
+      MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  bool flag = from_stdlib(&F) || is_stdlib_function(F.getName(), F, FAM);
+  return flag;
 }
 
-bool insert_func(Module &M, ModuleAnalysisManager &MAM) {
+bool instru_func_entry_and_exit(Module &M, ModuleAnalysisManager &MAM) {
   auto push_func_cl = get_push_func_decl(M);
   auto pop_func_cl = get_pop_func_decl(M);
 
   for (Function &F : M) {
-    if (should_skip_func(F))
+    if (should_skip_func(F, M, MAM))
       continue;
 
     // entry insertion
@@ -184,6 +206,19 @@ FunctionCallee get_rec_log_func_decl(Module &M) {
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
   FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
       "print_rec_to_file_with_loop_guard", rec_log_func_ty);
+  return rec_log_func_cl;
+}
+
+FunctionCallee get_content_log_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+
+  FunctionType *rec_log_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty}, false);
+  FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
+      "print_content_to_file_with_loop_guard", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -537,7 +572,7 @@ bool instr_unconditional_br_value(Instruction *term, Module &M) {
   add bool value instrumentation
 */
 
-bool insert_branches(Module &M, ModuleAnalysisManager &MAM) {
+bool instru_at_branches(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (auto &BB : F) {
@@ -579,7 +614,8 @@ FunctionCallee get_loop_end_func_decl(Module &M) {
   Type *i8_ty = Type::getInt8Ty(ctx);
   Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
 
-  FunctionType *loop_end_func_ty = FunctionType::get(void_ty, i8_ptr_ty, false);
+  FunctionType *loop_end_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty, i8_ptr_ty}, false);
   FunctionCallee loop_end_func_cl =
       M.getOrInsertFunction("loop_end", loop_end_func_ty);
   return loop_end_func_cl;
@@ -636,14 +672,19 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
     // first_inst->print(errs());
     // errs() << "\n";
 
+    SrcLoc out_loc = get_src_loc(first_inst, M);
     errs() << BLUE << "[Loop Instrument] " << RESET
-           << "Loop Exit Location: " << get_src_loc(first_inst, M) << "\n";
+           << "Loop Exit Location: " << out_loc << "\n";
+    std::stringstream ss;
+    ss << out_loc;
+    std::string out_loc_str = ss.str();
 
     // create instrumentation IR builder
     InstrumentationIRBuilder irb(first_inst);
+    Constant *out_loc_str_ptr = irb.CreateGlobalStringPtr(out_loc_str);
     // create a call to loop_end function
     FunctionCallee loop_end_cl = get_loop_end_func_decl(M);
-    irb.CreateCall(loop_end_cl, loop_loc_str);
+    irb.CreateCall(loop_end_cl, {loop_loc_str, out_loc_str_ptr});
   }
 
   return true;
@@ -673,11 +714,11 @@ bool instru_for_loop_context(Module &M, ModuleAnalysisManager &MAM) {
   FunctionAnalysisManager &FAM =
       MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
 
-  errs() << GREEN << "[Loop Instrument] " << RESET
-         << "Collecting loops in the module...\n";
+  // errs() << GREEN << "[Loop Instrument] " << RESET
+  //        << "Collecting loops in the module...\n";
   LoopList loops;
   for (Function &F : M) {
-    if (F.isDeclaration()) {
+    if (should_skip_func(F, M, MAM)) {
       continue; // skip declarations
     }
     LoopInfo &LI = FAM.getResult<LoopAnalysis>(F);
@@ -706,13 +747,92 @@ bool instru_for_loop_context(Module &M, ModuleAnalysisManager &MAM) {
   return flag;
 }
 
+bool call_inst_should_skip(CallBase *call_inst, Function &F,
+                           FunctionAnalysisManager &FAM) {
+
+  Function *called_func = call_inst->getCalledFunction();
+  if (!called_func) {
+    return false; // not a direct call, e.g., indirect calls
+  }
+
+  errs() << BLUE << "[Func Invocation Instrument] " << RESET
+         << "Called Function: " << called_func->getName() << "\n";
+
+  // skip standard library functions
+  if (called_func->isDeclaration()) {
+
+    if (is_stdlib_function(called_func->getName(), F,
+                           FAM)) { // Check by Function*
+      return true;
+
+    } else if (called_func->isIntrinsic()) {
+
+      // Check if the function name is a known built-in function
+      errs() << YELLOW << "[Warning] " << RESET
+             << "Skipping intrinsic function: " << called_func->getName()
+             << "\n";
+      return true; // skip intrinsic functions
+
+      // Already handled intrinsics if desired
+    }
+  }
+
+  return false;
+}
+
+bool instru_at_func_invocations(Module &M, ModuleAnalysisManager &MAM) {
+
+  FunctionAnalysisManager &FAM =
+      MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  for (Function &F : M) {
+    if (should_skip_func(F, M, MAM)) {
+      continue; // skip declarations and stdlib functions
+    }
+
+    // instrument function calls
+    for (auto &BB : F) {
+      for (Instruction &I : BB) {
+        if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
+          if (call_inst_should_skip(call_inst, F, FAM)) {
+            continue; // skip declarations and stdlib functions
+          }
+
+          errs() << GREEN << "[Func Invocation Instrument] " << RESET
+                 << "Function Call Instruction: ";
+          call_inst->print(errs());
+          errs() << "\n";
+
+          // instrument the call instruction
+          SrcLoc call_loc = get_src_loc(&I, M);
+          errs() << BLUE << "[Func Invocation Instrument] " << RESET
+                 << "Function Call Location: " << call_loc << "\n";
+          errs() << "\n";
+
+          std::stringstream ss;
+          ss << "Function Invocation: " << call_loc << " ";
+          std::string rec = ss.str();
+
+          // create instrumentation IR builder
+          InstrumentationIRBuilder irb(&I);
+          auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
+          auto content_log_func_cl = get_content_log_func_decl(M);
+          irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+        }
+      }
+    }
+  }
+  return false;
+}
+
 bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // auto printf_cl = add_printf_decl(m);
   // modification already
   bool flag = false;
 
-  flag |= insert_func(M, MAM);
-  flag |= insert_branches(M, MAM);
+  // invocation instrumentation should be done first
+  flag |= instru_at_func_invocations(M, MAM);
+  flag |= instru_func_entry_and_exit(M, MAM);
+  flag |= instru_at_branches(M, MAM);
   // flag |= instr_bool_value(M);
   flag |= instru_for_loop_context(M, MAM);
   return flag;

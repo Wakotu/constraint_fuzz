@@ -97,8 +97,15 @@ function copy_include() {
 }
 
 function build_corpus() {
+  corpus_zip_path='/struct_fuzz/dec_fuzzer_seed_corpus.zip'
   cd ${LIB_BUILD}
-  wget https://storage.googleapis.com/aom-test-data/fuzzer/dec_fuzzer_seed_corpus.zip
+  if [[ -f "$corpus_zip_path" ]]; then
+    blue_echo "Copying dec_fuzzer_seed_corpus.zip from $corpus_zip_path..."
+    cp "$corpus_zip_path" .
+  else
+    blue_echo "Downloading dec_fuzzer_seed_corpus.zip..."
+    wget https://storage.googleapis.com/aom-test-data/fuzzer/dec_fuzzer_seed_corpus.zip
+  fi
   unzip dec_fuzzer_seed_corpus.zip
   rm dec_fuzzer_seed_corpus.zip
   mv testdata corpus

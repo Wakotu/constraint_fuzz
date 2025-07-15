@@ -392,8 +392,8 @@ mod tests {
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/00cadb83512031af7f5c2d1a9ec4e552/139779446296768_main";
         // 1w+ lines
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/3effe625c2b16d1fae470b3a34a27a33/140367869948096_main";
-        // 120w+ lines
-        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/c6c027c60001d149db5f928f1d6252dc/139831438344384_main";
+        // 70w+ lines
+        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-15 11:42:30/exec_recs/guards/60f2d8411b22461523aa58efd8565611/140564838961344_main";
 
         let tree = timer_it(
             || ExecTree::from_guard_file_wo_constraint(guard_fpath),
@@ -423,7 +423,7 @@ mod tests {
         for (idx, line_res) in reader.lines().enumerate() {
             let line = line_res?;
 
-            let func_name = match FuncActionType::get_func_name(&line) {
+            let func_name = match FuncActionType::get_func_name_from_return_guard(&line) {
                 Ok(name) => name,
                 Err(e) => {
                     log::error!(

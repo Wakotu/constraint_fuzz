@@ -94,7 +94,7 @@ impl SrcLoc {
         prefix: &str,
     ) -> std::result::Result<Self, GuardParseError> {
         if !line.starts_with(prefix) {
-            return Err(GuardParseError::to_prefix_err(eyre::eyre!(
+            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
                 "Line does not start with expected prefix: {}",
                 prefix
             )));

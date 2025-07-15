@@ -1,6 +1,7 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
     },
     deopt::utils::write_bytes_to_file,
 };
+use clap::parser;
 use color_eyre::eyre::{bail, Result};
 use dot_writer::{Attributes, DotWriter, Style};
 
@@ -326,18 +328,20 @@ impl ExecTree {
     }
 
     pub fn collect_recur_entries(&self) -> Result<RecurRes> {
+        log::debug!("Original root length: {}", self.root_ptr.borrow().get_len());
         let recur_checker = ExecTreeRecurChecker::new();
         recur_checker.check_recur(self.root_ptr.clone())
     }
 
     pub fn show_recur_entries(&self) -> Result<()> {
+        log::info!("Checking for recursions in the execution tree...");
         let recur_entries = self.collect_recur_entries()?;
         if recur_entries.is_empty() {
-            log::info!("No recursion entries found in the execution tree.");
+            log::debug!("No recursion entries found in the execution tree.");
         } else {
-            log::info!("{} Recursion entries found:", recur_entries.len());
+            log::debug!("{} Recursion entries found:", recur_entries.len());
             for entry in recur_entries.iter() {
-                log::info!(
+                log::debug!(
                     "Function Cycle: {:?}, Parent Function: {}",
                     entry.func_cycle,
                     entry.parent_func
@@ -348,6 +352,7 @@ impl ExecTree {
     }
 
     pub fn show_most_called_funcs(&self) -> Result<()> {
+        log::info!("Analyzing most called functions in the execution tree...");
         const FUNC_NUM: usize = 10;
 
         let mut func_call_count: HashMap<String, usize> = HashMap::new();
@@ -367,13 +372,14 @@ impl ExecTree {
         sorted_funcs.sort_by(|a, b| b.1.cmp(&a.1)); // sort by count in descending order
 
         for entry in sorted_funcs.iter().take(FUNC_NUM) {
-            log::info!("Function: {}, Call Count: {}", entry.0, entry.1);
+            log::debug!("Function: {}, Call Count: {}", entry.0, entry.1);
         }
 
         let most_called_entry = sorted_funcs.first().ok_or_else(|| {
             eyre::eyre!("No functions found in the execution tree to analyze call counts.")
         })?;
 
+        // Invocation information for the most called function
         const ITER_TRY: usize = 5;
 
         let mut triage: usize = 0;
@@ -392,19 +398,116 @@ impl ExecTree {
                 })?;
                 let parent_func = parent_func_ptr.borrow();
                 let parent_func_name = parent_func.get_func_name_or_init();
-                log::info!(
-                    "Function {}, {} found, Parent Function: {}",
+                log::debug!(
+                    "Function {} with length of {}, {} found, Parent Function: {}",
                     most_called_entry.0,
+                    func_node.get_len(),
                     triage,
                     parent_func_name
                 );
             }
         }
+        self.show_common_parent_for_mcf(&most_called_entry.0)?;
+        self.show_common_parent_for_mcf("av1_read_coeffs_txb")?;
 
+        Ok(())
+    }
+
+    fn show_child_to_parent(
+        child: SharedFuncNodePtr,
+        parent: SharedFuncNodePtr,
+        prompt: &str,
+    ) -> Result<()> {
+        log::debug!(
+            "{}: {} -> {}",
+            prompt,
+            child.borrow().get_func_name_or_init(),
+            parent.borrow().get_func_name_or_init()
+        );
+        Ok(())
+    }
+
+    fn get_common_parent_ptr(
+        &self,
+        func_ptr_a: SharedFuncNodePtr,
+        func_ptr_b: SharedFuncNodePtr,
+    ) -> Result<SharedFuncNodePtr> {
+        log::info!(
+            "Show common parent for functions: {} and {}",
+            func_ptr_a.borrow().get_func_name_or_init(),
+            func_ptr_b.borrow().get_func_name_or_init()
+        );
+        let mut parent_ptr_a_op = func_ptr_a.borrow().get_parent_ptr();
+        let mut parent_ptr_b_op = func_ptr_b.borrow().get_parent_ptr();
+
+        let mut child_ptr_a = func_ptr_a.clone();
+        let mut child_ptr_b = func_ptr_b.clone();
+
+        while let (Some(ptr_a), Some(ptr_b)) = (parent_ptr_a_op, parent_ptr_b_op) {
+            Self::show_child_to_parent(child_ptr_a.clone(), ptr_a.clone(), "Call Chain A")?;
+            Self::show_child_to_parent(child_ptr_b.clone(), ptr_b.clone(), "Call Chain B")?;
+            if Rc::ptr_eq(&ptr_a, &ptr_b) {
+                return Ok(ptr_a);
+            }
+
+            child_ptr_a = ptr_a.clone();
+            child_ptr_b = ptr_b.clone();
+            parent_ptr_a_op = ptr_a.borrow().get_parent_ptr();
+            parent_ptr_b_op = ptr_b.borrow().get_parent_ptr();
+        }
+
+        bail!("No common parent found for the given function pointers");
+    }
+
+    fn show_chain_to_root(func_node_ptr: SharedFuncNodePtr) -> () {
+        let mut cur_ptr = func_node_ptr;
+        loop {
+            let parent_ptr_op = { cur_ptr.borrow().get_parent_ptr() };
+            if let Some(parent_ptr) = parent_ptr_op {
+                log::debug!(
+                    "{} -> {}",
+                    cur_ptr.borrow().get_func_name_or_init(),
+                    parent_ptr.borrow().get_func_name_or_init()
+                );
+                cur_ptr = parent_ptr;
+            } else {
+                log::debug!(
+                    "Reached root function: {}",
+                    cur_ptr.borrow().get_func_name_or_init()
+                );
+                break;
+            }
+        }
+    }
+
+    fn show_common_parent_for_mcf(&self, func_name: &str) -> Result<()> {
+        // collect 2 function pointers with the same name
+        let mut func_ptrs: Vec<SharedFuncNodePtr> = Vec::new();
+        for func_node_ptr in self.bfs_iter() {
+            let func_node = func_node_ptr.borrow();
+            if func_node.get_func_name_or_init() == func_name {
+                func_ptrs.push(func_node_ptr.clone());
+                if func_ptrs.len() >= 2 {
+                    break; // we only need two function pointers
+                }
+            }
+        }
+
+        let func_ptr_a = func_ptrs
+            .get(0)
+            .ok_or_else(|| eyre::eyre!("Function {} not found in the execution tree", func_name))?;
+        let func_ptr_b = func_ptrs
+            .get(1)
+            .ok_or_else(|| eyre::eyre!("Function {} not found in the execution tree", func_name))?;
+
+        let common_parent_ptr =
+            self.get_common_parent_ptr(func_ptr_a.clone(), func_ptr_b.clone())?;
+        Self::show_chain_to_root(common_parent_ptr.clone());
         Ok(())
     }
 }
 
+#[derive(PartialEq, Eq, Hash)]
 pub struct RecurEntry {
     func_cycle: Vec<String>,
     parent_func: String,
@@ -413,7 +516,7 @@ pub struct RecurEntry {
 type RecurRes = Vec<RecurEntry>;
 
 pub struct ExecTreeRecurChecker {
-    recur_entries: Vec<RecurEntry>,
+    recur_entries: HashSet<RecurEntry>,
     // root_ptr: SharedFuncNodePtr,
     // stack of function names to track recursion
     func_stack: Vec<String>,
@@ -422,9 +525,14 @@ pub struct ExecTreeRecurChecker {
 impl ExecTreeRecurChecker {
     fn new() -> Self {
         Self {
-            recur_entries: Vec::new(),
+            recur_entries: HashSet::new(),
             func_stack: Vec::new(),
         }
+    }
+
+    fn get_latest_same_func(&self, func_name: &str) -> Option<usize> {
+        // find the latest index of the same function name in the stack
+        self.func_stack.iter().rposition(|x| x == func_name)
     }
 
     /// update function stack during traversion and add recur entries detected to global list
@@ -433,21 +541,10 @@ impl ExecTreeRecurChecker {
 
         let func_name = cur_func.get_func_name_or_init().to_owned();
         // check recursion
-        if self.func_stack.contains(&func_name) {
+
+        if let Some(cycle_start_idx) = self.get_latest_same_func(&func_name) {
             // recursion detected
             let mut func_cycle = Vec::new();
-            // find the cycle start index
-            let cycle_start_idx = self
-                .func_stack
-                .iter()
-                .position(|x| x == &func_name)
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Function {} contained not found in function stack: {:?}",
-                        func_name,
-                        self.func_stack
-                    )
-                })?;
             // collect the cycle entries
             for entry in self.func_stack.iter().skip(cycle_start_idx) {
                 func_cycle.push(entry.to_owned());
@@ -468,7 +565,7 @@ impl ExecTreeRecurChecker {
                 func_cycle,
                 parent_func,
             };
-            self.recur_entries.push(recur_entry);
+            self.recur_entries.insert(recur_entry);
         }
         // push to stack
         self.func_stack.push(func_name);
@@ -483,7 +580,8 @@ impl ExecTreeRecurChecker {
     }
 
     pub fn check_recur(mut self, root_func_ptr: SharedFuncNodePtr) -> Result<RecurRes> {
+        log::debug!("Cloned root length: {}", root_func_ptr.borrow().get_len());
         self.check_recur_impl(root_func_ptr)?;
-        Ok(self.recur_entries)
+        Ok(self.recur_entries.into_iter().collect())
     }
 }

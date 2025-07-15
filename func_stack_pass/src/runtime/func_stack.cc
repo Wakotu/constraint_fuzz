@@ -166,16 +166,28 @@ bool exceed_loop_limit() {
   return cnt > LOOP_LIMIT;
 }
 
-void print_rec_to_file(const char *rec) {
+void print_content_to_file(const char *content) {
   std::ofstream &out = get_of();
-  out << rec << "\n";
+  out << content;
 }
 
-void print_rec_to_file_with_loop_guard(const char *rec) {
+void print_rec_to_file(const char *rec) {
+  std::stringstream ss;
+  ss << rec << "\n";
+  print_content_to_file(ss.str().c_str());
+}
+
+void print_content_to_file_with_loop_guard(const char *content) {
   if (exceed_loop_limit()) {
     return;
   }
-  print_rec_to_file(rec);
+  print_content_to_file(content);
+}
+
+void print_rec_to_file_with_loop_guard(const char *rec) {
+  std::stringstream ss;
+  ss << rec << "\n";
+  print_content_to_file_with_loop_guard(ss.str().c_str());
 }
 
 void loop_hit(const char *loop_loc) {
@@ -221,28 +233,29 @@ void loop_hit(const char *loop_loc) {
   }
 }
 
-void loop_end(const char *loop_loc) {
+void loop_end(const char *header_loc, const char *out_loc) {
   LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
     // if the stack is empty, this is an error
     std::stringstream ss;
-    ss << "Loop end without loop start: " << loop_loc;
+    ss << "Loop end without loop start: " << header_loc << " " << out_loc;
     print_rec_to_file(ss.str().c_str());
     return;
   }
   // consider reasonable to be hit without passing loop entry
   auto &cur = loop_stack.top();
-  if (cur.first == loop_loc) {
+  if (cur.first == header_loc) {
     loop_stack.pop();
     // Loop End Out
     std::stringstream ss;
-    ss << "Out of Loop: " << loop_loc << " at count " << cur.second;
+    ss << "Out of Loop: " << header_loc << " " << out_loc << " at count "
+       << cur.second;
     print_rec_to_file(ss.str().c_str());
   } else {
     // this is an error, loop end without loop start
     // Loop End Without Start
     std::stringstream ss;
-    ss << "Loop end without loop start: " << loop_loc;
+    ss << "Loop end without loop start: " << header_loc << " " << out_loc;
     print_rec_to_file(ss.str().c_str());
   }
 }

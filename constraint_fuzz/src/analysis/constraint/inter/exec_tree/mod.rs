@@ -1,3 +1,4 @@
+use chrono::format::parse;
 use color_eyre::eyre::{bail, Result};
 use dot_writer::{Attributes, DotWriter, Style};
 use std::fmt;
@@ -11,15 +12,12 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::analysis::constraint::inter::error::{handle_guard_err_result, GuardParseError};
+use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
     get_prefix, ExecAction, FuncAction, FuncActionType, IntraAction, LoopAction,
 };
-use crate::analysis::constraint::inter::exec_tree::analyze::{
-    ExecTreeIter, FuncNodeLenEntry, FuncNodeLenList,
-};
+use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
 use crate::analysis::constraint::inter::loc::SrcLoc;
-use crate::deopt::utils::write_bytes_to_file;
 use crate::{
     config::{get_trunc_cnt, is_debug_mode},
     feedback::branches::constraints::Constraint,
@@ -86,16 +84,16 @@ impl Iterator for SubFuncIter {
     type Item = SharedFuncNodePtr;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let cur_idx = if let Some(cur_ptr) = &self.cur_func_ptr {
+        let prev_idx = if let Some(cur_ptr) = &self.cur_func_ptr {
             let cur_func = cur_ptr.borrow();
             cur_func
                 .get_parent_idx()
-                .expect("Current function pointer should have a parent index")
+                .expect("Current function pointer should have a parent index") as i64
         } else {
-            0
+            -1
         };
         let parent_func = self.parent_func_ptr.borrow();
-        for act in parent_func.iter_acts_at(cur_idx + 1) {
+        for act in parent_func.iter_acts_at((prev_idx + 1) as usize) {
             if let ExecAction::Func(func_act) = act {
                 // get child pointer
                 if let Some(child_ptr) = func_act.get_child_ptr() {
@@ -323,7 +321,7 @@ impl ExecTree {
         const REG_BR_PREFIX: &str = "Br Guard:";
         let prefix = get_prefix(line)?;
         if prefix != REG_BR_PREFIX {
-            return Err(GuardParseError::to_prefix_err(eyre::eyre!(
+            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
                 "Line does not match regular branch guard prefix: {}",
                 line
             )));
@@ -350,27 +348,49 @@ impl ExecTree {
         )))
     }
 
-    fn parse_guard(&self, line: &str) -> Result<(Option<ValueHit>, Option<ExecAction>)> {
+    /// May return 3 kinds of GuardParseError variants as error.
+    /// Of which SkipError should be taken care of as a repeat signal
+    fn parse_guard_impl(
+        &self,
+        line: &str,
+    ) -> std::result::Result<(Option<ValueHit>, Option<ExecAction>), GuardParseError> {
         // handle simple guards
-        if let Some(value_hit) = handle_guard_err_result(ValueHit::parse_value_guard(line))? {
+        if let Some(value_hit) = GuardParseError::to_eyre(ValueHit::parse_value_guard(line))? {
             return Ok((Some(value_hit), None));
         }
-        if let Some(intra_act) = handle_guard_err_result(IntraAction::parse_simple_guard(line))? {
+        if let Some(intra_act) = GuardParseError::to_eyre(IntraAction::parse_simple_guard(line))? {
             return Ok((None, Some(ExecAction::Intra(intra_act))));
         }
-        if let Some(loop_act) = handle_guard_err_result(LoopAction::parse_loop_guard(line))? {
+        if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_guard(line))? {
             return Ok((None, Some(ExecAction::Loop(loop_act))));
         }
 
         // regular br parse
         if let Some((value_hit, intra_act)) =
-            handle_guard_err_result(Self::parse_regular_br_guard(line))?
+            GuardParseError::to_eyre(Self::parse_regular_br_guard(line))?
         {
             return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act))));
         }
 
         let func_act = self.create_func_act(line)?;
+
         Ok((None, Some(ExecAction::Func(func_act))))
+    }
+
+    fn parse_guard(&self, line: &str) -> Result<(Option<ValueHit>, Option<ExecAction>)> {
+        let mut parse_res;
+        let mut parse_content = line;
+
+        loop {
+            parse_res = self.parse_guard_impl(parse_content);
+            if let Err(GuardParseError::SkipError { data: _, skip_num }) = parse_res {
+                // if SkipError, skip the number of characters and try again
+                parse_content = &parse_content[skip_num..];
+            } else {
+                break;
+            }
+        }
+        GuardParseError::to_eyre_ultimate(parse_res)
     }
 
     //// add record to current entry
@@ -381,16 +401,15 @@ impl ExecTree {
         Ok(())
     }
 
-    fn create_func_act(&self, line: &str) -> Result<FuncAction> {
-        if !FuncActionType::is_call_guard(line) && !FuncActionType::is_return_guard(line) {
-            bail!("Line does not match function action type: {}", line);
-        }
-        let func_name = FuncActionType::get_func_name(line)?;
-        if FuncActionType::is_return_guard(line) {
-            let func_act = FuncAction::new(FuncActionType::Return, func_name.to_owned());
-            return Ok(func_act);
+    fn create_func_act(&self, line: &str) -> std::result::Result<FuncAction, GuardParseError> {
+        if let Ok(return_act) = FuncAction::parse_return_guard(line) {
+            return Ok(return_act);
         }
 
+        // possible to return skip error
+        let (invoc_loc_op, func_name) = FuncAction::parse_call_guard(line)?;
+
+        /* get context information for newly created function node */
         // get index of Function Action which corresponds to new function node.
         let cur_act_len = {
             let cur_func = self.cur_node_ptr.borrow();
@@ -404,7 +423,10 @@ impl ExecTree {
         )
         .get_node_ptr();
 
-        let act_type = FuncActionType::Call { child_ptr };
+        let act_type = FuncActionType::Call {
+            child_ptr,
+            invoc_loc: invoc_loc_op,
+        };
 
         let func_act = FuncAction::new(act_type, func_name.to_owned());
         return Ok(func_act);

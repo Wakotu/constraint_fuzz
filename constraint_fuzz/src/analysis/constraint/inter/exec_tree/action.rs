@@ -1,5 +1,5 @@
 use color_eyre::eyre::{self, Result};
-use std::{fmt, sync::Mutex};
+use std::fmt;
 
 use color_eyre::eyre::bail;
 
@@ -17,7 +17,7 @@ pub fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
         // return the substring from the start to the position of ':'
         Ok(&line[..pos + 1])
     } else {
-        Err(GuardParseError::to_prefix_err(eyre::eyre!(
+        Err(GuardParseError::as_prefix_err(eyre::eyre!(
             "Line does not contain a colon: {}",
             line
         )))
@@ -26,17 +26,21 @@ pub fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
 
 #[derive(Clone)]
 pub enum FuncActionType {
-    Call { child_ptr: SharedFuncNodePtr },
+    Call {
+        child_ptr: SharedFuncNodePtr,
+        invoc_loc: Option<SrcLoc>,
+    },
     Return,
 }
 
 impl FuncActionType {
     const ENT_PREFIX: &'static str = "enter ";
+    const INVOC_PREFIX: &'static str = "Function Invocation:";
     const RET_PREFIX: &'static str = "return from ";
 
-    pub fn is_call_guard(line: &str) -> bool {
-        line.starts_with(Self::ENT_PREFIX)
-    }
+    // pub fn is_call_guard(line: &str) -> bool {
+    //     line.starts_with(Self::ENT_PREFIX)
+    // }
 
     pub fn is_return_guard(line: &str) -> bool {
         line.starts_with(Self::RET_PREFIX)
@@ -54,16 +58,8 @@ impl FuncActionType {
         Ok(func_name)
     }
 
-    pub fn get_func_name(line: &str) -> Result<&str> {
-        if !Self::is_call_guard(line) && !Self::is_return_guard(line) {
-            bail!("Line does not match function action type: {}", line);
-        }
-
-        if Self::is_call_guard(line) {
-            Self::get_func_name_from_line(line, Self::ENT_PREFIX)
-        } else {
-            Self::get_func_name_from_line(line, Self::RET_PREFIX)
-        }
+    pub fn get_func_name_from_return_guard(line: &str) -> Result<&str> {
+        Self::get_func_name_from_line(line, Self::RET_PREFIX)
     }
 }
 
@@ -76,7 +72,10 @@ pub struct FuncAction {
 impl FuncAction {
     pub fn get_dot_id(&self, cnt: usize) -> String {
         match &self.act_type {
-            FuncActionType::Call { child_ptr: _ } => format!("Function_Call_Action_{}", cnt),
+            FuncActionType::Call {
+                child_ptr: _,
+                invoc_loc: _,
+            } => format!("Function_Call_Action_{}", cnt),
             FuncActionType::Return => format!("Function_Return_Action_{}", cnt),
         }
     }
@@ -85,12 +84,16 @@ impl FuncAction {
 impl fmt::Debug for FuncAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.act_type {
-            FuncActionType::Call { child_ptr } => {
+            FuncActionType::Call {
+                child_ptr,
+                invoc_loc,
+            } => {
                 write!(
                     f,
-                    "Call({}) -> Child({:?})",
+                    "Call({}) -> Child({:?}) at {:?}",
                     self.func_name,
-                    child_ptr.borrow()
+                    child_ptr.borrow(),
+                    invoc_loc
                 )
             }
             FuncActionType::Return => write!(f, "Return({})", self.func_name),
@@ -119,11 +122,70 @@ impl FuncAction {
     }
 
     pub fn get_child_ptr(&self) -> Option<SharedFuncNodePtr> {
-        if let FuncActionType::Call { child_ptr } = &self.act_type {
+        if let FuncActionType::Call {
+            child_ptr,
+            invoc_loc: _,
+        } = &self.act_type
+        {
             Some(child_ptr.clone())
         } else {
             None
         }
+    }
+
+    pub fn parse_return_guard(line: &str) -> Result<Self> {
+        let func_name = FuncActionType::get_func_name_from_return_guard(line)?;
+        Ok(Self {
+            act_type: FuncActionType::Return,
+            func_name: func_name.to_owned(),
+        })
+    }
+
+    /// return invoc_loc extracted and number of characters consumed(including the trailing space)
+    fn parse_invoc_part(line: &str) -> Result<(SrcLoc, usize)> {
+        if !line.starts_with(FuncActionType::INVOC_PREFIX) {
+            bail!("Line does not start with invocation prefix: {}", line);
+        }
+
+        // + 1 for the space after the prefix
+        let invoc_part = &line[FuncActionType::INVOC_PREFIX.len() + 1..];
+        let loc_end_pos = invoc_part
+            .find(char::is_whitespace)
+            .ok_or_else(|| eyre::eyre!("No whitespace found in invocation part: {}", invoc_part))?;
+        let loc_str = &invoc_part[..loc_end_pos];
+        let loc = SrcLoc::from_str(loc_str)?;
+        Ok((
+            loc,
+            loc_end_pos + 1 + FuncActionType::INVOC_PREFIX.len() + 1,
+        ))
+    }
+
+    fn parse_entry_part(slice: &str) -> Result<String> {
+        let func_name = FuncActionType::get_func_name_from_line(slice, FuncActionType::ENT_PREFIX)?;
+        Ok(func_name.to_owned())
+    }
+
+    /// parse a line of call guard to get (invoc_loc_op, func_name)
+    pub fn parse_call_guard(
+        line: &str,
+    ) -> std::result::Result<(Option<SrcLoc>, String), GuardParseError> {
+        let (invoc_loc_op, pref_len) = match Self::parse_invoc_part(line) {
+            Ok((loc, len)) => (Some(loc), len),
+            Err(e) => {
+                log::warn!("Failed to parse invocation part: {}", e);
+                (None, 0)
+            }
+        };
+        let entry_part = &line[pref_len..];
+        let func_name = match Self::parse_entry_part(entry_part) {
+            Ok(name) => name,
+            Err(e) => {
+                log::warn!("Failed to parse entry part: {}", e);
+                return Err(GuardParseError::as_skip_err(e, pref_len));
+            }
+        };
+
+        Ok((invoc_loc_op, func_name))
     }
 }
 
@@ -199,7 +261,7 @@ impl IntraAction {
     pub fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
         let intra_type = IntraActionType::from_prefix(prefix).ok_or_else(|| {
-            GuardParseError::to_prefix_err(eyre::eyre!(
+            GuardParseError::as_prefix_err(eyre::eyre!(
                 "Unknown intra action type prefix: {}",
                 prefix
             ))
@@ -280,7 +342,10 @@ enum LoopActionType {
         count: usize,
         entry_type: LoopEntryType,
     },
-    LoopEnd(LoopEndType),
+    LoopEnd {
+        out_loc: SrcLoc,
+        end_type: LoopEndType,
+    },
 }
 
 #[derive(Clone)]
@@ -308,7 +373,7 @@ impl LoopAction {
     }
 
     /// Parse content part for header_loc and count.
-    fn parse_content_with_count(content_slice: &str) -> Result<(SrcLoc, usize)> {
+    fn parse_header_loc_with_count(content_slice: &str) -> Result<(SrcLoc, usize)> {
         let content_slice = content_slice.trim();
         let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
             eyre::eyre!(
@@ -324,19 +389,71 @@ impl LoopAction {
         Ok((header_loc, count))
     }
 
-    fn parse_content_wo_count(content_slice: &str) -> Result<SrcLoc> {
+    fn parse_header_out_loc_with_count(content_slice: &str) -> Result<(SrcLoc, SrcLoc, usize)> {
         let content_slice = content_slice.trim();
-        if content_slice.is_empty() {
-            bail!("Content slice is empty, cannot parse header location");
-        }
-        SrcLoc::from_str(content_slice)
+        let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
+            eyre::eyre!(
+                "Content slice does not contain whitespace: {}",
+                content_slice
+            )
+        })?;
+        let loc_part = &content_slice[..pos];
+        let header_loc = SrcLoc::from_str(loc_part)?;
+
+        let content_slice = content_slice[pos..].trim();
+        let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
+            eyre::eyre!(
+                "Content slice does not contain whitespace: {}",
+                content_slice
+            )
+        })?;
+        let loc_part = &content_slice[..pos];
+        let out_loc = SrcLoc::from_str(loc_part)?;
+
+        let cnt_part = &content_slice[pos..];
+        let count = Self::parse_loop_cnt(cnt_part)?;
+
+        Ok((header_loc, out_loc, count))
     }
+
+    fn parse_header_out_loc_wo_count(content_slice: &str) -> Result<(SrcLoc, SrcLoc)> {
+        let content_slice = content_slice.trim();
+        // header loc part
+        let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
+            eyre::eyre!(
+                "Content slice does not contain whitespace: {}",
+                content_slice
+            )
+        })?;
+        let loc_part = &content_slice[..pos];
+        let header_loc = SrcLoc::from_str(loc_part)?;
+
+        // out_loc part
+        let content_slice = content_slice[pos..].trim();
+        let pos = content_slice
+            .find(char::is_whitespace)
+            .unwrap_or(content_slice.len());
+        let loc_part = &content_slice[..pos];
+
+        let out_loc = SrcLoc::from_str(loc_part)?;
+
+        Ok((header_loc, out_loc))
+    }
+
+    // fn parse_header_loc_wo_count(content_slice: &str) -> Result<SrcLoc> {
+    //     let content_slice = content_slice.trim();
+    //     if content_slice.is_empty() {
+    //         bail!("Content slice is empty, cannot parse header location");
+    //     }
+    //     SrcLoc::from_str(content_slice)
+    // }
 
     pub fn parse_loop_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
 
+        // Loop Entry Guards
         if prefix.starts_with(Self::HIT_PREFIX) {
-            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+            let (header_loc, count) = Self::parse_header_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
                 la_type: LoopActionType::LoopEntry {
                     count,
@@ -345,7 +462,7 @@ impl LoopAction {
                 header_loc,
             });
         } else if prefix.starts_with(Self::EXCEED_PREFIX) {
-            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+            let (header_loc, count) = Self::parse_header_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
                 la_type: LoopActionType::LoopEntry {
                     count,
@@ -353,21 +470,30 @@ impl LoopAction {
                 },
                 header_loc,
             });
-        } else if prefix.starts_with(Self::OUT_PREFIX) {
-            let (header_loc, count) = Self::parse_content_with_count(&line[prefix.len()..])?;
+        }
+        // Loop End Guards
+        else if prefix.starts_with(Self::OUT_PREFIX) {
+            let (header_loc, out_loc, count) =
+                Self::parse_header_out_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEnd(LoopEndType::Out { count }),
+                la_type: LoopActionType::LoopEnd {
+                    out_loc,
+                    end_type: LoopEndType::Out { count },
+                },
                 header_loc,
             });
         } else if prefix.starts_with(Self::NO_START_PREFIX) {
-            let header_loc = Self::parse_content_wo_count(&line[prefix.len()..])?;
+            let (header_loc, out_loc) = Self::parse_header_out_loc_wo_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEnd(LoopEndType::NoStart),
+                la_type: LoopActionType::LoopEnd {
+                    out_loc,
+                    end_type: LoopEndType::NoStart,
+                },
                 header_loc,
             });
         }
 
-        Err(GuardParseError::to_prefix_err(eyre::eyre!(
+        Err(GuardParseError::as_prefix_err(eyre::eyre!(
             "Line does not match any known loop action type: {}",
             line
         )))
@@ -377,13 +503,29 @@ impl LoopAction {
         &self.header_loc
     }
 
+    pub fn get_out_loc(&self) -> Option<&SrcLoc> {
+        match &self.la_type {
+            LoopActionType::LoopEntry {
+                count: _,
+                entry_type: _,
+            } => None,
+            LoopActionType::LoopEnd {
+                out_loc,
+                end_type: _,
+            } => Some(out_loc),
+        }
+    }
+
     pub fn get_count(&self) -> Option<usize> {
         match self.la_type {
             LoopActionType::LoopEntry {
                 count,
                 entry_type: _,
             } => Some(count),
-            LoopActionType::LoopEnd(LoopEndType::Out { count }) => Some(count),
+            LoopActionType::LoopEnd {
+                out_loc: _,
+                end_type: LoopEndType::Out { count },
+            } => Some(count),
             _ => None,
         }
     }
@@ -398,7 +540,10 @@ impl LoopAction {
                 LoopEntryType::Hit => "LoopEntryHit",
             },
 
-            LoopActionType::LoopEnd(end_type) => match end_type {
+            LoopActionType::LoopEnd {
+                out_loc: _,
+                end_type,
+            } => match end_type {
                 LoopEndType::NoStart => "LoopEndNoStart",
                 LoopEndType::Out { .. } => "LoopEndOut",
             },
