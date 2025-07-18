@@ -595,7 +595,7 @@ bool instru_at_branches(Module &M, ModuleAnalysisManager &MAM) {
 // bool insert_loop(Module &m, ModuleAnalysisManager &mam) {
 // }
 
-FunctionCallee get_loop_hit_func_decl(Module &M) {
+FunctionCallee get_loop_entry_func_decl(Module &M) {
   LLVMContext &ctx = M.getContext();
   Type *void_ty = Type::getVoidTy(ctx);
   Type *i8_ty = Type::getInt8Ty(ctx);
@@ -604,7 +604,7 @@ FunctionCallee get_loop_hit_func_decl(Module &M) {
   FunctionType *loop_hit_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
   FunctionCallee loop_hit_func_cl =
-      M.getOrInsertFunction("loop_hit", loop_hit_func_ty);
+      M.getOrInsertFunction("loop_entry", loop_hit_func_ty);
   return loop_hit_func_cl;
 }
 
@@ -647,7 +647,7 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
 
   // create a call to loop_hit function with loop location
   auto loop_loc_str = irb.CreateGlobalStringPtr(loop_loc);
-  FunctionCallee loop_hit_cl = get_loop_hit_func_decl(M);
+  FunctionCallee loop_hit_cl = get_loop_entry_func_decl(M);
   irb.CreateCall(loop_hit_cl, {loop_loc_str});
 
   // instrument at loop exit
@@ -845,8 +845,8 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, PLUGIN_NAME, "v0.1", [](PassBuilder &PB) {
             PB.registerOptimizerEarlyEPCallback(
-                [](ModulePassManager &mpm, OptimizationLevel) {
-                  mpm.addPass(MyPass());
+                [](ModulePassManager &MPM, OptimizationLevel) {
+                  MPM.addPass(MyPass());
                 });
           }};
 }

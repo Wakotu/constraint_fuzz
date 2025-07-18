@@ -190,17 +190,21 @@ void print_rec_to_file_with_loop_guard(const char *rec) {
   print_content_to_file_with_loop_guard(ss.str().c_str());
 }
 
-void loop_hit(const char *loop_loc) {
+void push_new_entry_to_loop_stack(const char *loop_loc, LoopStack &loop_stack) {
+  LoopEntry lent{loop_loc, 1};
+  loop_stack.push(lent);
+
+  std::stringstream ss;
+  ss << "Loop Hit: " << loop_loc << " at count " << 1;
+  print_rec_to_file(ss.str().c_str());
+}
+
+void loop_entry(const char *loop_loc) {
   LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
     // hit at new loop without nesting
     // if the stack is empty, push a new entry
-    LoopEntry lent{loop_loc, 1};
-    loop_stack.push(lent);
-
-    std::stringstream ss;
-    ss << "Loop Hit: " << loop_loc << " at count " << 1;
-    print_rec_to_file(ss.str().c_str());
+    push_new_entry_to_loop_stack(loop_loc, loop_stack);
     return;
   }
 
@@ -211,7 +215,7 @@ void loop_hit(const char *loop_loc) {
     cur.second++;
     auto cnt = cur.second;
     if (cnt <= LOOP_LIMIT) {
-      // Loop Entry Hit
+      // Repeated hit for current loop entry
       std::stringstream ss;
       ss << "Loop Hit: " << loop_loc << " at count " << cnt;
       print_rec_to_file(ss.str().c_str());
@@ -224,12 +228,14 @@ void loop_hit(const char *loop_loc) {
   } else {
     // hit at nested loop
     // push a new entry
-    LoopEntry lent{loop_loc, 1};
-    loop_stack.push(lent);
 
-    std::stringstream ss;
-    ss << "Loop Hit: " << loop_loc << " at count " << 1;
-    print_rec_to_file(ss.str().c_str());
+    auto parent_count = cur.second;
+    if (parent_count > LOOP_LIMIT) {
+      // if parent loop is already exceeding limit, do not push new entry
+      return;
+    }
+
+    push_new_entry_to_loop_stack(loop_loc, loop_stack);
   }
 }
 
@@ -254,6 +260,13 @@ void loop_end(const char *header_loc, const char *out_loc) {
   } else {
     // this is an error, loop end without loop start
     // Loop End Without Start
+
+    // check if parent loop is exceeding limit
+    auto parent_count = cur.second;
+    if (parent_count > LOOP_LIMIT) {
+      return;
+    }
+
     std::stringstream ss;
     ss << "Loop end without loop start: " << header_loc << " " << out_loc;
     print_rec_to_file(ss.str().c_str());

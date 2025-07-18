@@ -108,19 +108,22 @@ impl CCArgs {
             };
         }
 
-        let mut link = true;
-        let mut cmpl = false;
+        let mut link_flag = true;
+        let mut compile_flag = false;
 
         for arg in args.iter() {
             if "-c" == arg {
-                link = false;
+                link_flag = false;
             }
 
             if Self::is_src_file(arg) {
-                cmpl = true;
+                compile_flag = true;
             }
         }
-        ClState { link, cmpl }
+        ClState {
+            link: link_flag,
+            cmpl: compile_flag,
+        }
     }
 
     fn get_cc_type(args: &[String]) -> CcType {
@@ -139,7 +142,7 @@ impl CCArgs {
         self.cl_stat.link
     }
 
-    fn contains_cmpl(&self) -> bool {
+    fn contains_compile(&self) -> bool {
         self.cl_stat.cmpl
     }
 
@@ -174,7 +177,7 @@ impl CCArgs {
     }
 
     fn add_plugin_flags(&mut self) -> Result<()> {
-        if !self.contains_cmpl() {
+        if !self.contains_compile() {
             return Ok(());
         }
 
