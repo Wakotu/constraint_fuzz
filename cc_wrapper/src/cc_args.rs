@@ -160,8 +160,8 @@ impl CCArgs {
         })
     }
 
-    pub fn append_arg(&mut self, arg: String) {
-        self.args.push(arg);
+    pub fn append_arg<T: AsRef<str>>(&mut self, arg: T) {
+        self.args.push(arg.as_ref().to_string());
     }
 
     fn cc_subst(&mut self) -> Result<()> {
@@ -192,6 +192,9 @@ impl CCArgs {
 
         let plg_flag = format!("-fpass-plugin={}", plg_path.to_string_lossy());
         self.append_arg(plg_flag);
+
+        // add optimization flags needed
+        self.append_arg("-fno-inline-functions");
 
         Ok(())
     }

@@ -14,7 +14,7 @@ use std::{
 
 use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
-    get_prefix, ExecAction, FuncAction, FuncActionType, IntraAction, LoopAction,
+    get_prefix, ExecAction, FuncAction, FuncActionType, IntraAction, LoopAction, RecurAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
 use crate::analysis::constraint::inter::loc::SrcLoc;
@@ -354,15 +354,19 @@ impl ExecTree {
         &self,
         line: &str,
     ) -> std::result::Result<(Option<ValueHit>, Option<ExecAction>), GuardParseError> {
-        // handle simple guards
+        // value hit
         if let Some(value_hit) = GuardParseError::to_eyre(ValueHit::parse_value_guard(line))? {
             return Ok((Some(value_hit), None));
         }
+        // simple guards
         if let Some(intra_act) = GuardParseError::to_eyre(IntraAction::parse_simple_guard(line))? {
             return Ok((None, Some(ExecAction::Intra(intra_act))));
         }
         if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_guard(line))? {
             return Ok((None, Some(ExecAction::Loop(loop_act))));
+        }
+        if let Some(recur_act) = GuardParseError::to_eyre(RecurAction::parse_recur_guard(line))? {
+            return Ok((None, Some(ExecAction::Recur(recur_act))));
         }
 
         // regular br parse
@@ -372,6 +376,7 @@ impl ExecTree {
             return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act))));
         }
 
+        // function action parse
         let func_act = self.create_func_act(line)?;
 
         Ok((None, Some(ExecAction::Func(func_act))))
@@ -404,6 +409,10 @@ impl ExecTree {
     fn create_func_act(&self, line: &str) -> std::result::Result<FuncAction, GuardParseError> {
         if let Ok(return_act) = FuncAction::parse_return_guard(line) {
             return Ok(return_act);
+        }
+
+        if let Ok(unwind_act) = FuncAction::parse_unwind_guard(line) {
+            return Ok(unwind_act);
         }
 
         // possible to return skip error

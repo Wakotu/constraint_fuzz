@@ -290,9 +290,11 @@ mod tests {
     };
 
     use eyre::bail;
+    use walkdir::WalkDir;
 
     use crate::{
-        analysis::constraint::inter::exec_tree::action::FuncActionType, deopt::utils::timer_it,
+        analysis::constraint::inter::exec_tree::action::FuncActionType,
+        deopt::utils::{get_file_lineno, timer_it},
         setup_test_run_entry,
     };
 
@@ -386,14 +388,42 @@ mod tests {
     }
 
     #[test]
+    fn test_largest_guard_file() -> Result<()> {
+        setup_test_run_entry("libaom", true)?;
+        let guard_dir = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 21:46:42/exec_recs/guards";
+
+        let mut largest_file = None;
+        let mut largest_size = 0;
+
+        for ent_res in WalkDir::new(guard_dir) {
+            let entry = ent_res?;
+            let fpath = entry.path();
+            if fpath.is_file() {
+                let lines = get_file_lineno(fpath)?;
+                if lines > largest_size {
+                    largest_size = lines;
+                    largest_file = Some(fpath.to_owned());
+                }
+            }
+        }
+        let largest_file = largest_file.ok_or_else(|| eyre::eyre!("No guard files found"))?;
+        log::info!("Largest guard file: {:?}", largest_file);
+        log::info!("Number of lines: {}", largest_size);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_exec_tree_analyze() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
         // 479w+ lines
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/00cadb83512031af7f5c2d1a9ec4e552/139779446296768_main";
         // 1w+ lines
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/3effe625c2b16d1fae470b3a34a27a33/140367869948096_main";
-        // 70w+ lines
-        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-15 11:42:30/exec_recs/guards/60f2d8411b22461523aa58efd8565611/140564838961344_main";
+        // 16w+ lines
+        // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 10:55:25/exec_recs/guards/552e96e21047f09afb5bcd5ec3d474eb/140139541866176";
+        // 4w+ lines
+        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 21:46:42/exec_recs/guards/627bc74eead81c7a184fae39c3677c49/140426707203776";
 
         let tree = timer_it(
             || ExecTree::from_guard_file_wo_constraint(guard_fpath),
@@ -405,8 +435,10 @@ mod tests {
         tree.show_long_func_nodes()?;
         tree.show_recur_entries()?;
         tree.show_most_called_funcs()?;
+        tree.show_most_hit_loop_headers()?;
+        tree.show_func_with_most_childs()?;
 
-        // tree.to_dot_svg("/struct_fuzz/test_exec_tree.svg")?;
+        tree.to_dot_svg("/struct_fuzz/test_exec_tree.svg")?;
 
         Ok(())
     }

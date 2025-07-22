@@ -31,12 +31,14 @@ pub enum FuncActionType {
         invoc_loc: Option<SrcLoc>,
     },
     Return,
+    Unwind,
 }
 
 impl FuncActionType {
     const ENT_PREFIX: &'static str = "enter ";
     const INVOC_PREFIX: &'static str = "Function Invocation:";
     const RET_PREFIX: &'static str = "return from ";
+    const UNWIND_PREFIX: &'static str = "unwind from ";
 
     // pub fn is_call_guard(line: &str) -> bool {
     //     line.starts_with(Self::ENT_PREFIX)
@@ -61,6 +63,10 @@ impl FuncActionType {
     pub fn get_func_name_from_return_guard(line: &str) -> Result<&str> {
         Self::get_func_name_from_line(line, Self::RET_PREFIX)
     }
+
+    pub fn get_func_name_from_unwind_guard(line: &str) -> Result<&str> {
+        Self::get_func_name_from_line(line, Self::UNWIND_PREFIX)
+    }
 }
 
 #[derive(Clone)]
@@ -77,6 +83,7 @@ impl FuncAction {
                 invoc_loc: _,
             } => format!("Function_Call_Action_{}", cnt),
             FuncActionType::Return => format!("Function_Return_Action_{}", cnt),
+            FuncActionType::Unwind => format!("Function_Unwind_Action_{}", cnt),
         }
     }
 }
@@ -97,6 +104,7 @@ impl fmt::Debug for FuncAction {
                 )
             }
             FuncActionType::Return => write!(f, "Return({})", self.func_name),
+            FuncActionType::Unwind => write!(f, "Unwind({})", self.func_name),
         }
     }
 }
@@ -137,6 +145,14 @@ impl FuncAction {
         let func_name = FuncActionType::get_func_name_from_return_guard(line)?;
         Ok(Self {
             act_type: FuncActionType::Return,
+            func_name: func_name.to_owned(),
+        })
+    }
+
+    pub fn parse_unwind_guard(line: &str) -> Result<Self> {
+        let func_name = FuncActionType::get_func_name_from_unwind_guard(line)?;
+        Ok(Self {
+            act_type: FuncActionType::Unwind,
             func_name: func_name.to_owned(),
         })
     }
@@ -577,10 +593,31 @@ impl fmt::Debug for LoopAction {
 }
 
 #[derive(Clone)]
+pub enum RecurAction {
+    Locked,
+    Released,
+}
+
+impl RecurAction {
+    pub fn parse_recur_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+        match line {
+            "Recur Lock locked" => Ok(RecurAction::Locked),
+            "Recur Lock released" => Ok(RecurAction::Released),
+            _ => Err(GuardParseError::as_prefix_err(eyre::eyre!(
+                "
+                Line does not match any known recur action type: {}",
+                line
+            ))),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum ExecAction {
     Func(FuncAction),
     Intra(IntraAction),
     Loop(LoopAction),
+    Recur(RecurAction),
 }
 
 impl ExecAction {
@@ -589,6 +626,7 @@ impl ExecAction {
             ExecAction::Func(func_act) => func_act.is_call(),
             ExecAction::Intra(_) => false,
             ExecAction::Loop(_) => false,
+            ExecAction::Recur(_) => false,
         }
     }
 
@@ -612,6 +650,10 @@ impl DotId for ExecAction {
             ExecAction::Func(func_act) => func_act.get_dot_id(cnt),
             ExecAction::Intra(intra_act) => intra_act.get_dot_id(cnt),
             ExecAction::Loop(_) => format!("Loop_Action_{}", cnt),
+            ExecAction::Recur(recur_act) => match recur_act {
+                RecurAction::Locked => format!("Recur_Lock_Action_{}", cnt),
+                RecurAction::Released => format!("Recur_Release_Action_{}", cnt),
+            },
         }
     }
 }
@@ -622,6 +664,10 @@ impl fmt::Debug for ExecAction {
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
             ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),
+            ExecAction::Recur(recur_act) => match recur_act {
+                RecurAction::Locked => write!(f, "RecurAction: Locked"),
+                RecurAction::Released => write!(f, "RecurAction: Released"),
+            },
         }
     }
 }

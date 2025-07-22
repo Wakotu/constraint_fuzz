@@ -690,7 +690,7 @@ pub mod utils {
     use std::{
         collections::HashSet,
         fs::File,
-        io::{BufReader, Read},
+        io::{BufRead, BufReader, Read},
     };
 
     use chrono::Local;
@@ -730,6 +730,13 @@ pub mod utils {
     /**
      * file related
      */
+
+    /// return line number of the file
+    pub fn get_file_lineno<P: AsRef<Path>>(fpath: P) -> Result<usize> {
+        let file = File::open(fpath)?;
+        let reader = BufReader::new(file);
+        Ok(reader.lines().count())
+    }
 
     pub fn buffer_read_to_bytes<P: AsRef<Path>>(fpath: P) -> Result<Vec<u8>> {
         // buffer read

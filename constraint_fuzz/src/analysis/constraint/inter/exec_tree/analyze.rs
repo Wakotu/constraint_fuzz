@@ -5,13 +5,15 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::exec_tree::{
-        action::ExecAction, incre_dot_counter, DotId, ExecTree, FuncIter, FuncNode,
-        SharedFuncNodePtr, SubFuncIter,
+    analysis::constraint::inter::{
+        exec_tree::{
+            action::ExecAction, incre_dot_counter, DotId, ExecTree, FuncIter, FuncNode,
+            SharedFuncNodePtr,
+        },
+        loc::SrcLoc,
     },
     deopt::utils::write_bytes_to_file,
 };
-use clap::parser;
 use color_eyre::eyre::{bail, Result};
 use dot_writer::{Attributes, DotWriter, Style};
 
@@ -148,7 +150,7 @@ impl ExecTree {
     // const INTRA_ACTION_LIMIT: usize = 50;
     // const LOOP_ACTION_LIMIT: usize = 30;
 
-    fn should_ignore_act(cur_func: &FuncNode, idx: usize) -> Result<bool> {
+    fn act_ignore_at_visualization(cur_func: &FuncNode, idx: usize) -> Result<bool> {
         // ignore action if it is a loop or intra-function action
         let act = cur_func.get_act_at(idx).ok_or_else(|| {
             eyre::eyre!(
@@ -163,6 +165,7 @@ impl ExecTree {
             // ignore loop actions
             ExecAction::Loop(_) => Ok(true),
             ExecAction::Intra(_) => Ok(true),
+            ExecAction::Recur(_) => Ok(true), // ignore recur actions
         }
     }
 
@@ -192,7 +195,7 @@ impl ExecTree {
 
             for (idx, act_id) in act_id_list.iter().enumerate() {
                 // judge if current action node should be ignored
-                if Self::should_ignore_act(&cur_func, idx)? {
+                if Self::act_ignore_at_visualization(&cur_func, idx)? {
                     ignore_prev += 1;
                     continue;
                 }
@@ -251,6 +254,47 @@ impl ExecTree {
         Ok(())
     }
 
+    fn draw_func_cluster_for_func_tree<'d, 'w>(
+        cur_func_ptr: SharedFuncNodePtr,
+        digraph: &mut dot_writer::Scope<'d, 'w>,
+    ) -> Result<String> {
+        let cur_func = cur_func_ptr.borrow();
+        let cur_func_id = cur_func.get_dot_id();
+
+        // iterate all subfunctions
+        for sub_func_ptr in cur_func_ptr.iter_sub_funcs() {
+            // recursively draw subfunctions
+            let sub_func_id = Self::draw_func_cluster_for_func_tree(sub_func_ptr, digraph)?;
+            digraph.edge(&cur_func_id, sub_func_id);
+        }
+
+        Ok(cur_func_id.to_owned())
+    }
+
+    fn draw_func_tree_graph<'d, 'w>(&self, digraph: &mut dot_writer::Scope<'d, 'w>) -> Result<()> {
+        Self::draw_func_cluster_for_func_tree(self.root_ptr.clone(), digraph)?;
+        Ok(())
+    }
+    pub fn to_func_tree_dot_file<P: AsRef<Path>>(&self, dot_path: P) -> Result<()> {
+        log::info!("Starting to convert ExecTree to Function-Tree DOT file");
+        let mut dot_bytes = vec![];
+
+        // brackets to ensure that `dot_writer` is dropped before we write to the file
+        {
+            let mut dot_writer = DotWriter::from(&mut dot_bytes);
+            dot_writer.set_pretty_print(true);
+            let mut digraph = dot_writer.digraph();
+            self.draw_func_tree_graph(&mut digraph)?;
+        }
+        // write  dot_bytes to png_path
+        write_bytes_to_file(dot_path.as_ref(), &dot_bytes)?;
+        log::info!(
+            "dot conversion completed, written to: {}",
+            dot_path.as_ref().display()
+        );
+        Ok(())
+    }
+
     fn get_dot_path_from_svg_path<P: AsRef<Path>>(svg_path: P) -> Result<PathBuf> {
         let svg_path = svg_path.as_ref();
         let mut dot_path = svg_path.to_owned();
@@ -275,7 +319,7 @@ impl ExecTree {
 
     pub fn to_dot_svg<P: AsRef<Path>>(&self, svg_path: P) -> Result<()> {
         let dot_path = Self::get_dot_path_from_svg_path(&svg_path)?;
-        self.to_dot_file(&dot_path)?;
+        self.to_func_tree_dot_file(&dot_path)?;
 
         log::debug!("Converting dot file to svg: {}", dot_path.display());
         // run dot command to convert dot file to png
@@ -307,13 +351,13 @@ impl ExecTree {
     }
 
     /// Iterated element: FuncNode
-    pub fn bfs_iter(&self) -> ExecTreeIter {
+    pub fn func_node_bfs_iter(&self) -> ExecTreeIter {
         ExecTreeIter::new(self.root_ptr.clone())
     }
 
     pub fn collect_long_func_nodes(&self) -> Result<FuncNodeLenList> {
         let mut func_len_list = FuncNodeLenList::new();
-        for node_ptr in self.bfs_iter() {
+        for node_ptr in self.func_node_bfs_iter() {
             let node = node_ptr.borrow();
             let len_entry = node.to_len_entry();
             func_len_list.push(len_entry)?;
@@ -357,7 +401,7 @@ impl ExecTree {
 
         let mut func_call_count: HashMap<String, usize> = HashMap::new();
 
-        for func_node_ptr in self.bfs_iter() {
+        for func_node_ptr in self.func_node_bfs_iter() {
             let func_node = func_node_ptr.borrow();
             let func_name = func_node.get_func_name_or_init();
             let count = func_call_count.entry(func_name.to_owned()).or_insert(0);
@@ -383,19 +427,23 @@ impl ExecTree {
         const ITER_TRY: usize = 5;
 
         let mut triage: usize = 0;
-        for func_node_ptr in self.bfs_iter() {
+        for func_node_ptr in self.func_node_bfs_iter() {
             let func_node = func_node_ptr.borrow();
             if func_node.get_func_name_or_init() == most_called_entry.0 {
                 triage += 1;
                 if triage > ITER_TRY {
                     break;
                 }
-                let parent_func_ptr = func_node.get_parent_ptr().ok_or_else(|| {
-                    eyre::eyre!(
-                        "Function {} has no parent function",
-                        func_node.get_func_name_or_init()
-                    )
-                })?;
+                let parent_func_ptr = match func_node.get_parent_ptr() {
+                    Some(ptr) => ptr,
+                    None => {
+                        log::warn!(
+                            "Most Called Function {} has no parent function",
+                            most_called_entry.0
+                        );
+                        return Ok(()); // continue if no parent function found
+                    }
+                };
                 let parent_func = parent_func_ptr.borrow();
                 let parent_func_name = parent_func.get_func_name_or_init();
                 log::debug!(
@@ -408,7 +456,67 @@ impl ExecTree {
             }
         }
         self.show_common_parent_for_mcf(&most_called_entry.0)?;
-        self.show_common_parent_for_mcf("av1_read_coeffs_txb")?;
+        // self.show_common_parent_for_mcf("av1_read_coeffs_txb")?;
+
+        Ok(())
+    }
+
+    pub fn show_most_hit_loop_headers(&self) -> Result<()> {
+        log::info!("Analyzing most hit loop headers in the execution tree...");
+        const LOOP_NUM: usize = 10;
+
+        let mut loop_header_count: HashMap<SrcLoc, usize> = HashMap::new();
+
+        for func_node_ptr in self.func_node_bfs_iter() {
+            let func_node = func_node_ptr.borrow();
+            for act in func_node.iter_acts() {
+                if let ExecAction::Loop(loop_act) = act {
+                    let header_name = loop_act.get_header_loc().to_owned();
+                    let count = loop_header_count.entry(header_name).or_insert(0);
+                    *count += 1;
+                }
+            }
+        }
+
+        // sort by count
+        let mut sorted_loops: Vec<_> = loop_header_count
+            .into_iter()
+            .map(|(name, count)| (name, count))
+            .collect();
+        sorted_loops.sort_by(|a, b| b.1.cmp(&a.1)); // sort by count in descending order
+
+        for entry in sorted_loops.iter().take(LOOP_NUM) {
+            log::debug!("Loop Header: {:?}, Hit Count: {}", entry.0, entry.1);
+        }
+
+        Ok(())
+    }
+
+    pub fn show_func_with_most_childs(&self) -> Result<()> {
+        log::info!("Analyzing functions with the most child functions in the execution tree...");
+        const FUNC_NUM: usize = 10;
+
+        let mut func_child_count: HashMap<String, usize> = HashMap::new();
+
+        for func_node_ptr in self.func_node_bfs_iter() {
+            let func_node = func_node_ptr.borrow();
+            let func_name = func_node.get_func_name_or_init();
+            let sub_count = func_node_ptr.iter_sub_funcs().count();
+            func_child_count
+                .entry(func_name.to_owned())
+                .or_insert(sub_count);
+        }
+
+        // sort by count
+        let mut sorted_funcs: Vec<_> = func_child_count
+            .into_iter()
+            .map(|(name, count)| (name, count))
+            .collect();
+        sorted_funcs.sort_by(|a, b| b.1.cmp(&a.1)); // sort by count in descending order
+
+        for entry in sorted_funcs.iter().take(FUNC_NUM) {
+            log::debug!("Function: {}, Child Count: {}", entry.0, entry.1);
+        }
 
         Ok(())
     }
@@ -483,7 +591,7 @@ impl ExecTree {
     fn show_common_parent_for_mcf(&self, func_name: &str) -> Result<()> {
         // collect 2 function pointers with the same name
         let mut func_ptrs: Vec<SharedFuncNodePtr> = Vec::new();
-        for func_node_ptr in self.bfs_iter() {
+        for func_node_ptr in self.func_node_bfs_iter() {
             let func_node = func_node_ptr.borrow();
             if func_node.get_func_name_or_init() == func_name {
                 func_ptrs.push(func_node_ptr.clone());
@@ -550,7 +658,7 @@ impl ExecTreeRecurChecker {
                 func_cycle.push(entry.to_owned());
             }
             // add parent function name
-            let parent_func = self
+            let cycle_parent_func = self
                 .func_stack
                 .get(cycle_start_idx - 1)
                 .map(|s| s.to_owned())
@@ -560,10 +668,37 @@ impl ExecTreeRecurChecker {
                         self.func_stack
                     )
                 })?;
+            let sub_count = cur_func_ptr.iter_sub_funcs().count();
+            assert!(
+                sub_count == 0,
+                "Function {} invocation at recursion detection should not have sub functions",
+                func_name
+            );
+            let parent_func_ptr = cur_func_ptr.borrow().get_parent_ptr().ok_or_else(|| {
+                eyre::eyre!(
+                    "Parent function pointer not found for function: {}",
+                    func_name
+                )
+            })?;
+
+            log::info!(
+                "Sub Function of {} follows:",
+                parent_func_ptr.borrow().get_func_name_or_init()
+            );
+            let mut cnt = 0;
+            for sub_func_ptr in parent_func_ptr.iter_sub_funcs() {
+                cnt += 1;
+                log::debug!(
+                    "Function {} is a sub function of its parent: {}",
+                    sub_func_ptr.borrow().get_func_name_or_init(),
+                    parent_func_ptr.borrow().get_func_name_or_init()
+                );
+            }
+            log::info!("Sub Function Count: {}", cnt);
             // create a new recur entry
             let recur_entry = RecurEntry {
                 func_cycle,
-                parent_func,
+                parent_func: cycle_parent_func,
             };
             self.recur_entries.insert(recur_entry);
         }

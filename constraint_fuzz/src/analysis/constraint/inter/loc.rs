@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SrcLoc {
     NullLoc,
     Valid {

@@ -204,8 +204,8 @@ FunctionCallee get_rec_log_func_decl(Module &M) {
 
   FunctionType *rec_log_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
-  FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
-      "print_rec_to_file_with_loop_guard", rec_log_func_ty);
+  FunctionCallee rec_log_func_cl =
+      M.getOrInsertFunction("print_rec_to_file_with_guard", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -218,7 +218,7 @@ FunctionCallee get_content_log_func_decl(Module &M) {
   FunctionType *rec_log_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
   FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
-      "print_content_to_file_with_loop_guard", rec_log_func_ty);
+      "print_content_to_file_with_guard", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -642,6 +642,22 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
   ss << header_loc;
 
   std::string loop_loc = ss.str();
+
+  /**
+  Instrumentation count for specific loop location
+  */
+
+  // if (loop_loc ==
+  // "/struct_fuzz/constraint_fuzz/output/build/libaom/src/libaom/"
+  //                 "av1/common/cdef.c:135:5") {
+  //   errs() << YELLOW << "[REPEAT INSTRUMENT] " << RESET
+  //          << "Loop Location: " << loop_loc << "\n";
+  // }
+
+  /**
+  End of instrumentation count for specific loop location
+   */
+
   // create instrumentation IR builder
   InstrumentationIRBuilder irb(header_term);
 
