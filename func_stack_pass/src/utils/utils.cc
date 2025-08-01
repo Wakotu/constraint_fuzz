@@ -15,4 +15,8 @@ std::string demangle(const char *mangled_name) {
   }
 }
 
-bool SrcLoc::is_valid() const { return line.has_value() && col.has_value(); }
+bool SrcLoc::has_value() const { return line.has_value() && col.has_value(); }
+
+bool SrcLoc::is_valid() const {
+  return line.has_value() && col.has_value() && line > 0 && col > 0;
+}

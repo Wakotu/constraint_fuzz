@@ -5,7 +5,7 @@ use color_eyre::eyre::bail;
 
 use crate::analysis::constraint::inter::{
     error::GuardParseError,
-    exec_tree::{incre_dot_counter, DotId, SharedFuncNodePtr},
+    exec_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid},
     loc::SrcLoc,
 };
 
@@ -218,52 +218,52 @@ impl FuncAction {
 // }
 
 #[derive(Clone)]
-enum IntraActionType {
+enum JumpActionType {
     BrGuard,
     SwitchGuard,
     IndirectGuard,
 }
 
-impl IntraActionType {
+impl JumpActionType {
     pub fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix {
-            "Merge Br Guard:" => Some(IntraActionType::BrGuard),
-            "Switch Guard:" => Some(IntraActionType::SwitchGuard),
-            "IndirectBr Guard:" => Some(IntraActionType::IndirectGuard),
+            "Merge Br Guard:" => Some(JumpActionType::BrGuard),
+            "Switch Guard:" => Some(JumpActionType::SwitchGuard),
+            "IndirectBr Guard:" => Some(JumpActionType::IndirectGuard),
             _ => None,
         }
     }
 }
 
-impl fmt::Debug for IntraActionType {
+impl fmt::Debug for JumpActionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IntraActionType::BrGuard => write!(f, "BrGuard"),
-            IntraActionType::SwitchGuard => write!(f, "SwitchGuard"),
-            IntraActionType::IndirectGuard => write!(f, "IndirectGuard"),
+            JumpActionType::BrGuard => write!(f, "BrGuard"),
+            JumpActionType::SwitchGuard => write!(f, "SwitchGuard"),
+            JumpActionType::IndirectGuard => write!(f, "IndirectGuard"),
         }
     }
 }
 
 #[derive(Clone)]
-pub struct IntraAction {
-    intra_type: IntraActionType,
+pub struct JumpAction {
+    intra_type: JumpActionType,
     cond_loc: SrcLoc,
     cond_val: bool,
     dest_loc: SrcLoc,
 }
 
-impl IntraAction {
+impl JumpAction {
     fn get_dot_id(&self, cnt: usize) -> String {
         match self.intra_type {
-            IntraActionType::BrGuard => format!("Branch_Guard_Action_{}", cnt),
-            IntraActionType::SwitchGuard => format!("Switch_Guard_Action_{}", cnt),
-            IntraActionType::IndirectGuard => format!("Indirect_Branch_Guard_Action_{}", cnt),
+            JumpActionType::BrGuard => format!("Branch_Guard_Action_{}", cnt),
+            JumpActionType::SwitchGuard => format!("Switch_Guard_Action_{}", cnt),
+            JumpActionType::IndirectGuard => format!("Indirect_Branch_Guard_Action_{}", cnt),
         }
     }
 }
 
-impl fmt::Debug for IntraAction {
+impl fmt::Debug for JumpAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -273,10 +273,10 @@ impl fmt::Debug for IntraAction {
     }
 }
 
-impl IntraAction {
+impl JumpAction {
     pub fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
-        let intra_type = IntraActionType::from_prefix(prefix).ok_or_else(|| {
+        let intra_type = JumpActionType::from_prefix(prefix).ok_or_else(|| {
             GuardParseError::as_prefix_err(eyre::eyre!(
                 "Unknown intra action type prefix: {}",
                 prefix
@@ -332,11 +332,55 @@ impl IntraAction {
         let dest_loc = SrcLoc::from_str(parts[2])?;
 
         Ok(Self {
-            intra_type: IntraActionType::BrGuard, // default type, can be changed later
+            intra_type: JumpActionType::BrGuard, // default type, can be changed later
             cond_loc,
             cond_val,
             dest_loc,
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct ThreadAction {
+    loc: SrcLoc,
+    tid: Tid, // using String for simplicity, can be changed to a more appropriate type
+}
+
+impl ThreadAction {
+    const THREAD_ACTION_PREFIX: &'static str = "Thread Creation:";
+
+    pub fn get_thread_id(&self) -> Tid {
+        self.tid
+    }
+
+    pub fn parse_thread_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+        if !line.starts_with(Self::THREAD_ACTION_PREFIX) {
+            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+                "Line does not start with 'Thread Creation:': {}",
+                line
+            )));
+        }
+
+        let content = line[Self::THREAD_ACTION_PREFIX.len()..].trim();
+
+        let parts: Vec<&str> = content.split_whitespace().collect();
+        if parts.len() != 2 {
+            return Err(GuardParseError::as_parse_err(eyre::eyre!(
+                "Expected at least 3 parts in thread guard, found {}: {}",
+                parts.len(),
+                line
+            )));
+        }
+
+        let loc = SrcLoc::from_str(parts[0])?;
+        let tid = parts[1].parse::<Tid>().map_err(|_| {
+            GuardParseError::as_parse_err(eyre::eyre!(
+                "Failed to parse thread ID from part: {}",
+                parts[2]
+            ))
+        })?;
+
+        Ok(Self { loc, tid })
     }
 }
 
@@ -615,18 +659,17 @@ impl RecurAction {
 #[derive(Clone)]
 pub enum ExecAction {
     Func(FuncAction),
-    Intra(IntraAction),
+    Intra(JumpAction),
     Loop(LoopAction),
     Recur(RecurAction),
+    Thread(ThreadAction),
 }
 
 impl ExecAction {
     pub fn is_func_call(&self) -> bool {
         match self {
             ExecAction::Func(func_act) => func_act.is_call(),
-            ExecAction::Intra(_) => false,
-            ExecAction::Loop(_) => false,
-            ExecAction::Recur(_) => false,
+            _ => false,
         }
     }
 
@@ -654,6 +697,7 @@ impl DotId for ExecAction {
                 RecurAction::Locked => format!("Recur_Lock_Action_{}", cnt),
                 RecurAction::Released => format!("Recur_Release_Action_{}", cnt),
             },
+            ExecAction::Thread(_) => format!("Thread_Action_{}", cnt),
         }
     }
 }
@@ -668,6 +712,13 @@ impl fmt::Debug for ExecAction {
                 RecurAction::Locked => write!(f, "RecurAction: Locked"),
                 RecurAction::Released => write!(f, "RecurAction: Released"),
             },
+            ExecAction::Thread(thread_act) => {
+                write!(
+                    f,
+                    "ThreadAction: loc: {:?}, tid: {}",
+                    thread_act.loc, thread_act.tid
+                )
+            }
         }
     }
 }

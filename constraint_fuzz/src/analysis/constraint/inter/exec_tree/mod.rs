@@ -1,6 +1,7 @@
 use chrono::format::parse;
 use color_eyre::eyre::{bail, Result};
 use dot_writer::{Attributes, DotWriter, Style};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -14,7 +15,8 @@ use std::{
 
 use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
-    get_prefix, ExecAction, FuncAction, FuncActionType, IntraAction, LoopAction, RecurAction,
+    get_prefix, ExecAction, FuncAction, FuncActionType, JumpAction, LoopAction, RecurAction,
+    ThreadAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
 use crate::analysis::constraint::inter::loc::SrcLoc;
@@ -287,7 +289,7 @@ impl ValueHit {
     }
 }
 // pub type FuncBrStack = Vec<FuncEntry>;
-pub struct ExecTree {
+pub struct ThreadTree {
     cur_node_ptr: SharedFuncNodePtr,
     root_ptr: SharedFuncNodePtr,
     cur_depth: usize,
@@ -295,7 +297,7 @@ pub struct ExecTree {
     // data: Vec<FuncNode>,
 }
 
-impl ExecTree {
+impl ThreadTree {
     pub fn new() -> Self {
         let root_ptr = FuncNode::init_node().get_node_ptr();
 
@@ -317,7 +319,7 @@ impl ExecTree {
 
     fn parse_regular_br_guard(
         line: &str,
-    ) -> std::result::Result<(ValueHit, IntraAction), GuardParseError> {
+    ) -> std::result::Result<(ValueHit, JumpAction), GuardParseError> {
         const REG_BR_PREFIX: &str = "Br Guard:";
         let prefix = get_prefix(line)?;
         if prefix != REG_BR_PREFIX {
@@ -336,7 +338,7 @@ impl ExecTree {
             let value_hit = ValueHit::from_str(value_hit_str)?;
 
             // parse intra action
-            let intra_act = IntraAction::from_slice(intra_act_str)?;
+            let intra_act = JumpAction::from_slice(intra_act_str)?;
 
             return Ok((value_hit, intra_act));
         }
@@ -353,36 +355,52 @@ impl ExecTree {
     fn parse_guard_impl(
         &self,
         line: &str,
-    ) -> std::result::Result<(Option<ValueHit>, Option<ExecAction>), GuardParseError> {
+    ) -> std::result::Result<
+        (Option<ValueHit>, Option<ExecAction>, Option<THCPEntry>),
+        GuardParseError,
+    > {
         // value hit
         if let Some(value_hit) = GuardParseError::to_eyre(ValueHit::parse_value_guard(line))? {
-            return Ok((Some(value_hit), None));
+            return Ok((Some(value_hit), None, None));
         }
         // simple guards
-        if let Some(intra_act) = GuardParseError::to_eyre(IntraAction::parse_simple_guard(line))? {
-            return Ok((None, Some(ExecAction::Intra(intra_act))));
+        if let Some(intra_act) = GuardParseError::to_eyre(JumpAction::parse_simple_guard(line))? {
+            return Ok((None, Some(ExecAction::Intra(intra_act)), None));
         }
         if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_guard(line))? {
-            return Ok((None, Some(ExecAction::Loop(loop_act))));
+            return Ok((None, Some(ExecAction::Loop(loop_act)), None));
         }
         if let Some(recur_act) = GuardParseError::to_eyre(RecurAction::parse_recur_guard(line))? {
-            return Ok((None, Some(ExecAction::Recur(recur_act))));
+            return Ok((None, Some(ExecAction::Recur(recur_act)), None));
+        }
+        if let Some(thread_act) = GuardParseError::to_eyre(ThreadAction::parse_thread_guard(line))?
+        {
+            // construct a thcp entry
+            let func_node_ptr = self.cur_node_ptr.clone();
+            let act_idx = func_node_ptr.borrow().get_len();
+            let tid = thread_act.get_thread_id();
+            let thcp_entry = (tid, ActionPoint::new(func_node_ptr, act_idx));
+
+            return Ok((None, Some(ExecAction::Thread(thread_act)), Some(thcp_entry)));
         }
 
         // regular br parse
         if let Some((value_hit, intra_act)) =
             GuardParseError::to_eyre(Self::parse_regular_br_guard(line))?
         {
-            return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act))));
+            return Ok((Some(value_hit), Some(ExecAction::Intra(intra_act)), None));
         }
 
         // function action parse
         let func_act = self.create_func_act(line)?;
 
-        Ok((None, Some(ExecAction::Func(func_act))))
+        Ok((None, Some(ExecAction::Func(func_act)), None))
     }
 
-    fn parse_guard(&self, line: &str) -> Result<(Option<ValueHit>, Option<ExecAction>)> {
+    fn parse_guard(
+        &self,
+        line: &str,
+    ) -> Result<(Option<ValueHit>, Option<ExecAction>, Option<THCPEntry>)> {
         let mut parse_res;
         let mut parse_content = line;
 
@@ -455,8 +473,8 @@ impl ExecTree {
         line: &str,
         cons_op: Option<&Constraint>,
         hit_cnt: &mut usize,
-    ) -> Result<()> {
-        let (value_hit_op, act_op) = self.parse_guard(line)?;
+    ) -> Result<Option<THCPEntry>> {
+        let (value_hit_op, act_op, thcp_entry_op) = self.parse_guard(line)?;
 
         if let Some(act) = act_op {
             // add action to current node
@@ -510,19 +528,34 @@ impl ExecTree {
             }
         }
 
-        Ok(())
+        Ok(thcp_entry_op)
     }
 
-    pub fn from_guard_file<P: AsRef<Path>>(fs_path: P, cons: &Constraint) -> Result<Self> {
+    pub fn from_guard_file<P: AsRef<Path>>(
+        fs_path: P,
+        cons: &Constraint,
+    ) -> Result<(Self, THCPMAPPING)> {
         Self::from_guard_file_impl(fs_path.as_ref(), Some(cons))
     }
 
-    pub fn from_guard_file_wo_constraint<P: AsRef<Path>>(fs_path: P) -> Result<Self> {
+    pub fn from_guard_file_wo_constraint<P: AsRef<Path>>(
+        fs_path: P,
+    ) -> Result<(Self, THCPMAPPING)> {
         Self::from_guard_file_impl(fs_path.as_ref(), None)
     }
 
-    pub fn from_guard_file_impl(fs_path: &Path, cons_op: Option<&Constraint>) -> Result<Self> {
-        let mut exec_tree: ExecTree = ExecTree::new();
+    // single tree version
+    pub fn from_guard_file_wo_constraint_st<P: AsRef<Path>>(fs_path: P) -> Result<Self> {
+        let (exec_tree, _) = Self::from_guard_file_impl(fs_path.as_ref(), None)?;
+        Ok(exec_tree)
+    }
+
+    pub fn from_guard_file_impl(
+        fs_path: &Path,
+        cons_op: Option<&Constraint>,
+    ) -> Result<(Self, THCPMAPPING)> {
+        let mut exec_tree: ThreadTree = ThreadTree::new();
+        let mut thcp_mapping = HashMap::new();
 
         let file = File::open(fs_path)?;
         let reader = BufReader::new(file);
@@ -531,22 +564,63 @@ impl ExecTree {
             log::debug!("Processing line {}: {}", idx + 1, fs_path.display());
             let line = line_res?;
             // let exec_act = ExecAction::from_line(&line)?;
-            exec_tree.read_line(&line, cons_op, &mut hit_cnt)?;
+            let thcp_entry_op = exec_tree.read_line(&line, cons_op, &mut hit_cnt)?;
+            if let Some(thcp_entry) = thcp_entry_op {
+                thcp_mapping.insert(thcp_entry.0, thcp_entry.1);
+            }
 
+            // truncate if hit count exceeds truncation count
             if hit_cnt >= get_trunc_cnt() {
                 break;
             }
         }
 
-        Ok(exec_tree)
+        Ok((exec_tree, thcp_mapping))
     }
 }
 
-impl fmt::Debug for ExecTree {
+impl fmt::Debug for ThreadTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let root = self.root_ptr.borrow();
         writeln!(f, "ExecTree:")?;
         write!(f, "{:?}", root)?;
         Ok(())
     }
+}
+
+#[derive(Clone)]
+pub struct ActionPoint {
+    func_node_ptr: SharedFuncNodePtr,
+    act_idx: usize,
+}
+
+impl ActionPoint {
+    pub fn new(func_node_ptr: SharedFuncNodePtr, act_idx: usize) -> Self {
+        Self {
+            func_node_ptr,
+            act_idx,
+        }
+    }
+
+    pub fn get_func_node_ptr(&self) -> SharedFuncNodePtr {
+        self.func_node_ptr.clone()
+    }
+
+    pub fn get_act_idx(&self) -> usize {
+        self.act_idx
+    }
+}
+
+pub type Tid = usize;
+pub type THCPEntry = (Tid, ActionPoint);
+pub type THCPMAPPING = HashMap<Tid, ActionPoint>;
+pub struct ExecForest {
+    main_tree: ThreadTree,
+    sub_trees: Vec<ThreadTree>,
+    /// means mapping for thread id to thread creation action point
+    thcp_mapping: THCPMAPPING,
+}
+
+impl ExecForest {
+    pub fn from_guard_dir<P: AsRef<Path>>(guard_dir: P) {}
 }

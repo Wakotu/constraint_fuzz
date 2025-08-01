@@ -222,6 +222,20 @@ FunctionCallee get_content_log_func_decl(Module &M) {
   return rec_log_func_cl;
 }
 
+FunctionCallee get_thread_rec_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+  Type *opa_ptr_ty = PointerType::getUnqual(ctx);
+  FunctionType *thread_guard_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty, opa_ptr_ty}, false);
+  FunctionCallee thread_guard_func_cl =
+      M.getOrInsertFunction("thread_rec", thread_guard_func_ty);
+  return thread_guard_func_cl;
+}
+
 /**
   Br Instruction operations
 */
@@ -257,20 +271,32 @@ bool is_merge_br(BranchInst *br_inst) {
   Instrumentation operations
 */
 
-void instr_branch_dest_guard(Module &M, Instruction *jmp_inst, BasicBlock *dest,
-                             bool br_val, const char *prmpt, bool is_br) {
+// Instruction *get_first_inst_with_srcloc(BasicBlock &BB, Module &M) {
+//   for (Instruction &I : BB) {
+//     SrcLoc loc = get_src_loc(&I, M);
+//     if (loc.is_valid()) {
+//       return &I; // return the first instruction with a valid source location
+//     }
+//   }
+//   // fallback to the first non-PHI instruction
+//   return BB.getFirstNonPHI();
+// }
+
+void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
+                             BasicBlock *dest_bb, bool br_val,
+                             const char *prmpt, bool is_br) {
   // collect message: br src location , dest src location
   std::string src_path = get_src_path(M);
 
   SrcLoc br_loc = get_src_loc_with_path(jmp_inst, src_path);
-  if (!br_loc.is_valid()) {
+  if (!br_loc.has_value()) {
     errs() << RED << "[Error] " << RESET
            << "Conditional instruction has no debug location: ";
     jmp_inst->print(errs());
     errs() << "\n";
     // return;
   }
-  Instruction *dest_inst = dest->getFirstNonPHI();
+  Instruction *dest_inst = dest_bb->getFirstNonPHI();
 
   SrcLoc dest_loc = get_src_loc_with_path(dest_inst, src_path);
   while (!dest_loc.is_valid() && dest_inst->getNextNode()) {
@@ -279,7 +305,7 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst, BasicBlock *dest,
     dest_loc = get_src_loc_with_path(dest_inst, src_path);
   }
 
-  if (!dest_loc.is_valid()) {
+  if (!dest_loc.has_value()) {
     errs() << RED << "[Error] " << RESET
            << "Destination block has no debug location: ";
     dest_inst->print(errs());
@@ -301,16 +327,18 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst, BasicBlock *dest,
       ss << "NullLoc ";
       goto br_rec; // skip the condition location if not a branch instruction
     }
-    Instruction *cond_inst = get_cond_instr_from_br(br_inst);
-    if (!cond_inst) {
+
+    // offer value location
+    Instruction *cond_val_inst = get_cond_instr_from_br(br_inst);
+    if (!cond_val_inst) {
       ss << "NullLoc ";
       goto br_rec; // skip the condition location if no condition instruction
     }
     // assert(cond_inst && "Condition instruction should not be null");
 
-    if (!isa<PHINode>(cond_inst)) {
-      SrcLoc cond_loc = get_src_loc_with_path(cond_inst, src_path);
-      ss << cond_loc << " ";
+    if (!isa<PHINode>(cond_val_inst)) {
+      SrcLoc cond_val_loc = get_src_loc_with_path(cond_val_inst, src_path);
+      ss << cond_val_loc << " ";
     }
   }
 br_rec:
@@ -371,7 +399,7 @@ bool instr_switch_inst(Instruction *term, Module &M) {
     errs() << BLUE << "[Switch Instrument] " << RESET
            << "Switch Location: " << switch_loc << "\n";
     BasicBlock *default_dest = switch_inst->getDefaultDest();
-    instr_branch_dest_guard(M, switch_inst, default_dest, false, "Switch Guard",
+    instr_branch_dest_guard(M, switch_inst, default_dest, true, "Switch Guard",
                             false);
     for (auto case_it = switch_inst->case_begin();
          case_it != switch_inst->case_end(); ++case_it) {
@@ -568,11 +596,12 @@ bool instr_unconditional_br_value(Instruction *term, Module &M) {
 }
 
 /**
-  Distinguish guard with different instructions: br, switch, indirectbr
-  add bool value instrumentation
+  Instrumentation at select control flow instructions
+  - Branch Instruction
+  - Switch Instruction
+  - Indirect Branch Instruction:
 */
-
-bool instru_at_branches(Module &M, ModuleAnalysisManager &MAM) {
+bool instru_at_selections(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (auto &BB : F) {
@@ -800,6 +829,7 @@ bool instru_at_func_invocations(Module &M, ModuleAnalysisManager &MAM) {
 
   FunctionAnalysisManager &FAM =
       MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  bool flag = false;
   for (Function &F : M) {
     if (should_skip_func(F, M, MAM)) {
       continue; // skip declarations and stdlib functions
@@ -813,6 +843,7 @@ bool instru_at_func_invocations(Module &M, ModuleAnalysisManager &MAM) {
             continue; // skip declarations and stdlib functions
           }
 
+          flag = true; // found a function call to instrument
           errs() << GREEN << "[Func Invocation Instrument] " << RESET
                  << "Function Call Instruction: ";
           call_inst->print(errs());
@@ -837,7 +868,51 @@ bool instru_at_func_invocations(Module &M, ModuleAnalysisManager &MAM) {
       }
     }
   }
-  return false;
+  return flag;
+}
+
+bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = false;
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
+          // check if the call instruction is a thread creation function
+          if (call_inst->getCalledFunction() &&
+              call_inst->getCalledFunction()->getName() == "pthread_create") {
+            flag = true; // found a thread creation call
+            errs() << GREEN << "[Thread Creation Instrument] " << RESET
+                   << "Thread Creation Call Instruction: ";
+            call_inst->print(errs());
+            errs() << "\n";
+
+            SrcLoc call_loc = get_src_loc(&I, M);
+            errs() << BLUE << "[Thread Creation Instrument] " << RESET
+                   << "Thread Creation Location: " << call_loc << "\n";
+
+            Value *tid_ptr = call_inst->getArgOperand(0);
+
+            std::stringstream ss;
+            ss << "Thread Creation: " << call_loc;
+            std::string loc = ss.str();
+
+            // create instrumentation IR builder
+            InstrumentationIRBuilder irb(I.getNextNonDebugInstruction());
+            auto loc_str = irb.CreateGlobalStringPtr(loc.c_str());
+            auto thread_guard_func_cl = get_thread_rec_func_decl(M);
+            auto inst =
+                irb.CreateCall(thread_guard_func_cl, {loc_str, tid_ptr});
+            errs() << GREEN << "[Thread Creation Instrument] " << RESET
+                   << "Thread Guard Function Call Instruction: ";
+            inst->print(errs());
+            errs() << "\n";
+          }
+        }
+      }
+    }
+  }
+
+  return flag;
 }
 
 bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
@@ -848,9 +923,10 @@ bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // invocation instrumentation should be done first
   flag |= instru_at_func_invocations(M, MAM);
   flag |= instru_func_entry_and_exit(M, MAM);
-  flag |= instru_at_branches(M, MAM);
+  flag |= instru_at_selections(M, MAM);
   // flag |= instr_bool_value(M);
   flag |= instru_for_loop_context(M, MAM);
+  flag |= instru_for_thread_creation(M, MAM);
   return flag;
 }
 

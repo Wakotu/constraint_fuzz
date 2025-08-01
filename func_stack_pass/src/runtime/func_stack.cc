@@ -459,6 +459,16 @@ void loop_end(const char *header_loc, const char *out_loc) {
     print_rec_to_file_with_recur_guard(ss.str().c_str());
   }
 }
+
+// thread creation instrumentation
+void thread_rec(const char *loc, void *tid_ptr) {
+  pthread_t tid = *(pthread_t *)tid_ptr;
+  std::stringstream ss;
+  ss << loc << " " << tid << "\n";
+  // regardless of guards
+  print_content_to_file(ss.str().c_str());
+}
+
 // static std::unordered_map<std::size_t, unsigned int> loop_counter;
 
 // unsigned int get_loop_count(const SrcLoc &loc) {

@@ -17,6 +17,7 @@ struct SrcLoc {
   SrcLoc() = default;
   SrcLoc(const char *path, unsigned int line, unsigned int col)
       : src_path(path), line(line), col(col) {}
+  bool has_value() const;
   bool is_valid() const;
   friend std::ostream &operator<<(std::ostream &os, const SrcLoc &loc);
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
@@ -24,7 +25,7 @@ struct SrcLoc {
 };
 
 inline std::ostream &operator<<(std::ostream &os, const SrcLoc &loc) {
-  if (loc.is_valid()) {
+  if (loc.has_value()) {
     os << loc.src_path;
     if (loc.line.has_value()) {
       os << ":" << loc.line.value();
@@ -39,7 +40,7 @@ inline std::ostream &operator<<(std::ostream &os, const SrcLoc &loc) {
 }
 
 inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SrcLoc &loc) {
-  if (loc.is_valid()) {
+  if (loc.has_value()) {
     os << loc.src_path;
     if (loc.line.has_value()) {
       os << ":" << loc.line.value();
@@ -64,7 +65,7 @@ inline bool operator==(const SrcLoc &lhs, const SrcLoc &rhs) {
 namespace std {
 template <> struct hash<SrcLoc> {
   size_t operator()(const SrcLoc &t) const {
-    if (!t.is_valid()) {
+    if (!t.has_value()) {
       // If the SrcLoc is invalid, return a fixed hash value
       return std::hash<std::string>{}("InvalidSrcLoc");
     }

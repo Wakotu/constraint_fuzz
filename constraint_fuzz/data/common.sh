@@ -30,6 +30,9 @@ function init() {
   mkdir -p $WORK
   rm -rf $OUT
   mkdir -p $OUT
+
+  CODEQL_DB_DIR=${LIB_BUILD}/codeql_db
+  rm -rf $CODEQL_DB_DIR
 }
 
 #https://google.github.io/oss-fuzz/getting-started/new-project-guide/#static-and-dynamic-linking-of-libraries
@@ -208,5 +211,6 @@ function build_all() {
     build_cov &&
     copy_include &&
     build_bc &&
-    write_magicbytes_to_dict
+    write_magicbytes_to_dict &&
+    build_codeql
 }

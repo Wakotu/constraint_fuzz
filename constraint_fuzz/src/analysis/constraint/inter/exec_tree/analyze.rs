@@ -7,8 +7,8 @@ use std::{
 use crate::{
     analysis::constraint::inter::{
         exec_tree::{
-            action::ExecAction, incre_dot_counter, DotId, ExecTree, FuncIter, FuncNode,
-            SharedFuncNodePtr,
+            action::ExecAction, incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr,
+            ThreadTree,
         },
         loc::SrcLoc,
     },
@@ -21,11 +21,11 @@ use dot_writer::{Attributes, DotWriter, Style};
  * BFS Iterator
  */
 
-pub struct ExecTreeIter {
+pub struct ThreadTreeIter {
     queue: Vec<SharedFuncNodePtr>,
 }
 
-impl ExecTreeIter {
+impl ThreadTreeIter {
     pub fn new(root: SharedFuncNodePtr) -> Self {
         let mut queue = Vec::new();
         queue.push(root);
@@ -33,7 +33,7 @@ impl ExecTreeIter {
     }
 }
 
-impl Iterator for ExecTreeIter {
+impl Iterator for ThreadTreeIter {
     type Item = SharedFuncNodePtr;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -146,7 +146,7 @@ impl FuncNodeLenList {
     }
 }
 
-impl ExecTree {
+impl ThreadTree {
     // const INTRA_ACTION_LIMIT: usize = 50;
     // const LOOP_ACTION_LIMIT: usize = 30;
 
@@ -162,10 +162,7 @@ impl ExecTree {
         match act {
             // ignore intra-function actions
             ExecAction::Func(_) => Ok(false),
-            // ignore loop actions
-            ExecAction::Loop(_) => Ok(true),
-            ExecAction::Intra(_) => Ok(true),
-            ExecAction::Recur(_) => Ok(true), // ignore recur actions
+            _ => Ok(true),
         }
     }
 
@@ -351,8 +348,8 @@ impl ExecTree {
     }
 
     /// Iterated element: FuncNode
-    pub fn func_node_bfs_iter(&self) -> ExecTreeIter {
-        ExecTreeIter::new(self.root_ptr.clone())
+    pub fn func_node_bfs_iter(&self) -> ThreadTreeIter {
+        ThreadTreeIter::new(self.root_ptr.clone())
     }
 
     pub fn collect_long_func_nodes(&self) -> Result<FuncNodeLenList> {
@@ -373,7 +370,7 @@ impl ExecTree {
 
     pub fn collect_recur_entries(&self) -> Result<RecurRes> {
         log::debug!("Original root length: {}", self.root_ptr.borrow().get_len());
-        let recur_checker = ExecTreeRecurChecker::new();
+        let recur_checker = ThreadTreeRecurChecker::new();
         recur_checker.check_recur(self.root_ptr.clone())
     }
 
@@ -623,14 +620,14 @@ pub struct RecurEntry {
 
 type RecurRes = Vec<RecurEntry>;
 
-pub struct ExecTreeRecurChecker {
+pub struct ThreadTreeRecurChecker {
     recur_entries: HashSet<RecurEntry>,
     // root_ptr: SharedFuncNodePtr,
     // stack of function names to track recursion
     func_stack: Vec<String>,
 }
 
-impl ExecTreeRecurChecker {
+impl ThreadTreeRecurChecker {
     fn new() -> Self {
         Self {
             recur_entries: HashSet::new(),

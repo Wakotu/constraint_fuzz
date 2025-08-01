@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::{exec_tree::ExecTree, loc::SrcRegion},
+    analysis::constraint::inter::{exec_tree::ThreadTree, loc::SrcRegion},
     config::is_debug_mode,
     deopt::utils::{
         buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path, get_parent_dir,
@@ -232,8 +232,9 @@ impl RevIterSolver {
     // }
 
     /// exec -> threads -> func stack list -> func chain list
-    pub fn extract_exec_trees_from_rec(&self, exec: &ExecRec) -> Result<Vec<ExecTree>> {
-        let mut tree_list: Vec<ExecTree> = vec![];
+    /// TODO: to be modified in the new context
+    pub fn extract_exec_trees_from_rec(&self, exec: &ExecRec) -> Result<Vec<ThreadTree>> {
+        let mut tree_list: Vec<ThreadTree> = vec![];
         log::warn!("Guard Directory: {}", exec.execg_dir.display());
 
         for ent_res in fs::read_dir(&exec.execg_dir)? {
@@ -244,7 +245,7 @@ impl RevIterSolver {
                 "Expected a file: {}",
                 guard_fpath.display()
             );
-            let tree = ExecTree::from_guard_file(&guard_fpath, &self.cons)?;
+            let (tree, _) = ThreadTree::from_guard_file(&guard_fpath, &self.cons)?;
             // may need some non-empty check
 
             if is_debug_mode() {
@@ -261,7 +262,7 @@ impl RevIterSolver {
         self.execs.iter()
     }
 
-    pub fn get_exec_trees_for_expe(&self) -> Result<Vec<ExecTree>> {
+    pub fn get_exec_trees_for_expe(&self) -> Result<Vec<ThreadTree>> {
         // let execs = self.get_related_executions()?;
         let mut res_tree_list = vec![];
         for exec in self.execs.iter() {
@@ -390,7 +391,7 @@ mod tests {
     #[test]
     fn test_largest_guard_file() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
-        let guard_dir = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 21:46:42/exec_recs/guards";
+        let guard_dir = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 22:55:29/exec_recs/guards";
 
         let mut largest_file = None;
         let mut largest_size = 0;
@@ -422,11 +423,11 @@ mod tests {
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-06 17:10:42/exec_recs/guards/3effe625c2b16d1fae470b3a34a27a33/140367869948096_main";
         // 16w+ lines
         // let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 10:55:25/exec_recs/guards/552e96e21047f09afb5bcd5ec3d474eb/140139541866176";
-        // 4w+ lines
-        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-22 21:46:42/exec_recs/guards/627bc74eead81c7a184fae39c3677c49/140426707203776";
+
+        let guard_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-07-29 17:39:56/exec_recs/guards/f3ddc63d83dc3d9c65a75c69b9fdd160/139674618101952_main";
 
         let tree = timer_it(
-            || ExecTree::from_guard_file_wo_constraint(guard_fpath),
+            || ThreadTree::from_guard_file_wo_constraint_st(guard_fpath),
             "Guard File Parsing",
         )?;
 

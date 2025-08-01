@@ -213,7 +213,7 @@ pub struct Config {
     /// Execution numbers during runtime information collection
     #[arg(short, long, default_value_t = 100)]
     pub info_coll_execs: usize,
-    #[clap(default_value_t = 2)]
+    #[clap(default_value_t = 1)]
     pub trunc_cnt: usize,
     /// Generative model to generate codes.
     #[arg(short, long, default_value = "chat-gpt")]
@@ -263,7 +263,7 @@ impl Config {
             debug_mode: debug_mode,
             info_coll_execs: 100,
             fuzz_time_out: 1,
-            trunc_cnt: 2,
+            trunc_cnt: 1,
             generative: LLMModel::ChatGPT,
             infill: LLMModel::ChatGPT,
             n_sample: 10,
