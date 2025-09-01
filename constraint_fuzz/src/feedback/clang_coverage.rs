@@ -13,7 +13,7 @@ use crate::analysis::constraint::inter::loc::SrcRegion;
 
 use crate::{
     deopt::utils::get_file_dirname,
-    feedback::{branches::constraints::Constraint, observer::Observer},
+    feedback::{branches::constraints::UBConstraint, observer::Observer},
 };
 use crate::{execution::Executor, program::serde::Deserializer};
 

@@ -4,5 +4,6 @@
     "**/.git/subtree-cache/**": true,
     "**/.hg/store/**": true,
     "**/examples/**": true
-  }
+  },
+  "cmake.sourceDirectory": "/struct_fuzz/func_stack_pass",
 }

@@ -9,9 +9,9 @@ This file implements mapping between case path and record names
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
-// record name -> case path
 pub type ExecName = String;
 
+// Exec Record name -> case path
 static EXEC_NAME_TO_CASE_PATH: LazyLock<RwLock<HashMap<ExecName, PathBuf>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 

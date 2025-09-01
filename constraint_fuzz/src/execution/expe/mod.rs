@@ -7,7 +7,7 @@ use std::{
 use crate::{
     deopt::utils::{get_file_dirname, get_formatted_time},
     execution::Compile,
-    feedback::branches::constraints::Constraint,
+    feedback::branches::constraints::UBConstraint,
 };
 
 use super::{logger::TimeUsage, Executor};
@@ -18,8 +18,6 @@ use color_eyre::eyre::Result;
 
 pub mod instru_cov_run;
 pub mod paths;
-
-pub mod case_map;
 
 // #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 // pub enum CovFormat {
@@ -99,7 +97,7 @@ impl Executor {
     //     Ok(())
     // }
 
-    fn save_cons_list(&self, cons_list: &Vec<Constraint>, work_dir: &Path) -> Result<PathBuf> {
+    fn save_cons_list(&self, cons_list: &Vec<UBConstraint>, work_dir: &Path) -> Result<PathBuf> {
         let fpath = self.deopt.get_constraints_path(work_dir);
         let file = File::create(&fpath)?;
         // let mut writer = BufWriter::new(file);

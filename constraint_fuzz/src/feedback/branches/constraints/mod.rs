@@ -8,7 +8,8 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::{exec_tree::ValueHit, ExecRec},
+    analysis::constraint::exec_rec::ExecRec,
+    analysis::constraint::inter::exec_tree::thread_tree::UBVHit,
     config::{get_config, is_debug_mode},
     execution::max_cpu_count,
     feedback::clang_coverage::{
@@ -24,6 +25,8 @@ use threadpool::ThreadPool;
 
 use super::{Branch, BranchTrait};
 
+pub mod source_check;
+
 pub type Loc = [usize; 2];
 
 pub type Range = [usize; 4];
@@ -32,6 +35,8 @@ pub type MacMapping = HashMap<String, String>;
 
 pub trait LocTrait {
     fn is_less_equal(&self, loc: &Loc) -> bool;
+
+    fn loc_equal(&self, row: usize, col: usize) -> bool;
 }
 impl LocTrait for Loc {
     fn is_less_equal(&self, loc: &Loc) -> bool {
@@ -39,6 +44,10 @@ impl LocTrait for Loc {
             return self[0] < loc[0];
         }
         self[1] <= loc[1]
+    }
+
+    fn loc_equal(&self, row: usize, col: usize) -> bool {
+        self[0] == row && self[1] == col
     }
 }
 
@@ -156,8 +165,9 @@ impl CovRegionTrait for CovRegion {
         Ok(flag)
     }
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Constraint {
+pub struct UBConstraint {
     cond_expr: String,
     res: bool,
     pub fpath: PathBuf,
@@ -178,7 +188,7 @@ fn extract_func_name_from_sig(sig: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-impl std::fmt::Display for Constraint {
+impl std::fmt::Display for UBConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -188,12 +198,12 @@ impl std::fmt::Display for Constraint {
     }
 }
 
-impl Constraint {
+impl UBConstraint {
     fn exec_contains_cons(
         idx: usize,
         len: usize,
         exec: &ExecRec,
-        cons: &Constraint,
+        cons: &UBConstraint,
     ) -> Result<bool> {
         log::debug!("Processing execution {}/{}: {}", idx + 1, len, exec);
         let cov = exec.get_coverage()?;
@@ -220,30 +230,30 @@ impl Constraint {
         Ok(flag)
     }
 
-    pub fn get_related_executions(&self, work_dir: &Path) -> Result<Vec<ExecRec>> {
-        let exec_list = ExecRec::get_exec_list_from_work_dir(work_dir)?;
-        let res_list: Vec<ExecRec> = exec_list
-            .par_iter()
-            .enumerate()
-            .filter_map(|(idx, exec)| {
-                match Self::exec_contains_cons(idx, exec_list.len(), exec, self) {
-                    Ok(true) => Some(exec.to_owned()),
-                    Ok(false) => None,
-                    Err(e) => {
-                        // log::warn!("Error processing execution {}: {}", exec.exec_name, e);
-                        // None
-                        panic!("Error processing execution {}: {}", exec, e);
-                    }
-                }
-            })
-            .collect();
-        if res_list.is_empty() {
-            bail!("No related executions found for constraint: {:?}", self);
-        }
-        Ok(res_list)
-    }
+    // pub fn get_related_executions(&self, work_dir: &Path) -> Result<Vec<ExecRec>> {
+    //     let exec_list = ExecRec::get_exec_list_from_expe_dir(work_dir)?;
+    //     let res_list: Vec<ExecRec> = exec_list
+    //         .par_iter()
+    //         .enumerate()
+    //         .filter_map(|(idx, exec)| {
+    //             match Self::exec_contains_cons(idx, exec_list.len(), exec, self) {
+    //                 Ok(true) => Some(exec.to_owned()),
+    //                 Ok(false) => None,
+    //                 Err(e) => {
+    //                     // log::warn!("Error processing execution {}: {}", exec.exec_name, e);
+    //                     // None
+    //                     panic!("Error processing execution {}: {}", exec, e);
+    //                 }
+    //             }
+    //         })
+    //         .collect();
+    //     if res_list.is_empty() {
+    //         bail!("No related executions found for constraint: {:?}", self);
+    //     }
+    //     Ok(res_list)
+    // }
 
-    pub fn same_src_file(&self, val_hit: &ValueHit) -> bool {
+    pub fn same_src_file(&self, val_hit: &UBVHit) -> bool {
         let val_path_op = val_hit.get_src_path();
         match val_path_op {
             None => false,
@@ -251,7 +261,7 @@ impl Constraint {
         }
     }
 
-    pub fn near_hit(&self, val_hit: &ValueHit) -> bool {
+    pub fn near_hit(&self, val_hit: &UBVHit) -> bool {
         if !self.same_src_file(val_hit) {
             return false;
         }
@@ -268,7 +278,7 @@ impl Constraint {
     }
 
     /// judge if a CovFunction is related to this constraint
-    pub fn is_hit(&self, val_hit: &ValueHit) -> Result<bool> {
+    pub fn is_hit(&self, val_hit: &UBVHit) -> Result<bool> {
         let loc = val_hit.get_loc();
         loc.inside_range(&self.range, &self.fpath)
             .map_err(|e| eyre::eyre!("Failed to check if loc is inside range: {}", e))
@@ -374,12 +384,12 @@ impl CovFunction {
         Ok(text)
     }
 
-    fn parse_constraint_from_branch(&self, br: &Branch) -> Result<Constraint> {
+    fn parse_constraint_from_branch(&self, br: &Branch) -> Result<UBConstraint> {
         let res = br.branch_eval();
         let (cond_expr, fpath, range, func_sig, slice, macro_mapping) =
             self.extract_branch_in_covfunc(br)?;
 
-        let cons = Constraint {
+        let cons = UBConstraint {
             cond_expr,
             res,
             fpath,
@@ -561,11 +571,11 @@ impl CovFunction {
 }
 
 impl CodeCoverage {
-    pub fn collect_rev_constraints_from_cov_by_pool(&self) -> Result<Vec<Constraint>> {
+    pub fn collect_ub_constraints_from_cov_by_pool(&self) -> Result<Vec<UBConstraint>> {
         let cpu_count = max_cpu_count();
         let pool = ThreadPool::new(cpu_count);
 
-        let shared_cons_list: Arc<Mutex<Vec<Constraint>>> = Arc::new(Mutex::new(vec![]));
+        let shared_cons_list: Arc<Mutex<Vec<UBConstraint>>> = Arc::new(Mutex::new(vec![]));
         let err_occur = Arc::new(AtomicBool::new(false));
 
         for func in self.iter_function_covs() {

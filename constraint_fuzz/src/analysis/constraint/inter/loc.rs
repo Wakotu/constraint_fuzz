@@ -8,7 +8,7 @@ use std::{
 use crate::{
     analysis::constraint::inter::error::GuardParseError,
     feedback::{
-        branches::constraints::{Constraint, Loc, LocTrait, Range, RangeTrait},
+        branches::constraints::{Loc, LocTrait, Range, RangeTrait, UBConstraint},
         clang_coverage::{BranchCount, CovBranch, CovFunction},
     },
 };
@@ -184,7 +184,7 @@ impl SrcRegion {
         self.start.get_src_path().map(|p| p.to_owned())
     }
 
-    pub fn is_related_to_cons(&self, cons: &Constraint) -> Result<bool> {
+    pub fn is_related_to_cons(&self, cons: &UBConstraint) -> Result<bool> {
         let src_path = self
             .get_src_fpath()
             .ok_or_else(|| eyre::eyre!("Source file path is null"))?;

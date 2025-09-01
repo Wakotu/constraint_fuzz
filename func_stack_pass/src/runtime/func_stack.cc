@@ -464,7 +464,7 @@ void loop_end(const char *header_loc, const char *out_loc) {
 void thread_rec(const char *loc, void *tid_ptr) {
   pthread_t tid = *(pthread_t *)tid_ptr;
   std::stringstream ss;
-  ss << loc << " " << tid << "\n";
+  ss << "Thread Creation: " << loc << " " << tid << "\n";
   // regardless of guards
   print_content_to_file(ss.str().c_str());
 }

@@ -1,5 +1,4 @@
 pub mod ast;
-use expe::case_map::get_exec_name_from_case_path;
 use tempfile::NamedTempFile;
 pub mod expe;
 pub mod logger;
@@ -7,7 +6,8 @@ pub mod pch;
 pub mod sanitize;
 
 use self::logger::ProgramError;
-use crate::analysis::constraint::inter::ExecRec;
+use crate::analysis::constraint::exec_rec::case_map::get_exec_name_from_case_path;
+use crate::analysis::constraint::exec_rec::ExecRec;
 use crate::ast::utils::show_cmd_args;
 use crate::config::{
     get_config, get_func_pass_lib_dir, get_fuzz_time_out_as_secs, get_info_coll_execs,
@@ -512,8 +512,8 @@ impl Executor {
 
     /// returns (exec_guard_dir, exec_cov_dir)
     fn setup_exec_msg_dir(fuzzer: &Path) -> Result<(PathBuf, PathBuf)> {
-        let work_dir = get_file_parent_dir(fuzzer);
-        ExecRec::setup_exec_dir(work_dir)
+        let expe_dir = get_file_parent_dir(fuzzer);
+        ExecRec::setup_exec_dir(expe_dir)
     }
 
     pub fn execute_cov_fuzzer_pool(

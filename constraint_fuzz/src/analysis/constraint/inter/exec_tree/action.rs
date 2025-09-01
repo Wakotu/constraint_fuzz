@@ -5,7 +5,7 @@ use color_eyre::eyre::bail;
 
 use crate::analysis::constraint::inter::{
     error::GuardParseError,
-    exec_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid},
+    exec_tree::thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
     loc::SrcLoc,
 };
 
@@ -219,15 +219,17 @@ impl FuncAction {
 
 #[derive(Clone)]
 enum JumpActionType {
-    BrGuard,
+    BrGuard { val_loc: SrcLoc },
+    MergeBrGuard,
     SwitchGuard,
     IndirectGuard,
 }
 
 impl JumpActionType {
-    pub fn from_prefix(prefix: &str) -> Option<Self> {
+    pub fn from_simple_prefix(prefix: &str) -> Option<Self> {
         match prefix {
-            "Merge Br Guard:" => Some(JumpActionType::BrGuard),
+            // Only Merge Br Guard is in simple version
+            "Merge Br Guard:" => Some(JumpActionType::MergeBrGuard),
             "Switch Guard:" => Some(JumpActionType::SwitchGuard),
             "IndirectBr Guard:" => Some(JumpActionType::IndirectGuard),
             _ => None,
@@ -238,7 +240,10 @@ impl JumpActionType {
 impl fmt::Debug for JumpActionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JumpActionType::BrGuard => write!(f, "BrGuard"),
+            JumpActionType::BrGuard { val_loc } => {
+                write!(f, "BrGuard with value loc {:?}", val_loc)
+            }
+            JumpActionType::MergeBrGuard => write!(f, "MergeBrGuard"),
             JumpActionType::SwitchGuard => write!(f, "SwitchGuard"),
             JumpActionType::IndirectGuard => write!(f, "IndirectGuard"),
         }
@@ -248,7 +253,7 @@ impl fmt::Debug for JumpActionType {
 #[derive(Clone)]
 pub struct JumpAction {
     intra_type: JumpActionType,
-    cond_loc: SrcLoc,
+    from_loc: SrcLoc,
     cond_val: bool,
     dest_loc: SrcLoc,
 }
@@ -256,7 +261,10 @@ pub struct JumpAction {
 impl JumpAction {
     fn get_dot_id(&self, cnt: usize) -> String {
         match self.intra_type {
-            JumpActionType::BrGuard => format!("Branch_Guard_Action_{}", cnt),
+            JumpActionType::BrGuard { .. } => {
+                format!("Branch_Guard_Action_{}", cnt)
+            }
+            JumpActionType::MergeBrGuard => format!("Branch_Merge_Guard_Action_{}", cnt),
             JumpActionType::SwitchGuard => format!("Switch_Guard_Action_{}", cnt),
             JumpActionType::IndirectGuard => format!("Indirect_Branch_Guard_Action_{}", cnt),
         }
@@ -268,15 +276,15 @@ impl fmt::Debug for JumpAction {
         write!(
             f,
             "{:?} at {:?} with value {} to {:?}",
-            self.intra_type, self.cond_loc, self.cond_val, self.dest_loc
+            self.intra_type, self.from_loc, self.cond_val, self.dest_loc
         )
     }
 }
 
 impl JumpAction {
-    pub fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
-        let intra_type = JumpActionType::from_prefix(prefix).ok_or_else(|| {
+        let intra_type = JumpActionType::from_simple_prefix(prefix).ok_or_else(|| {
             GuardParseError::as_prefix_err(eyre::eyre!(
                 "Unknown intra action type prefix: {}",
                 prefix
@@ -310,13 +318,49 @@ impl JumpAction {
 
         Ok(Self {
             intra_type,
-            cond_loc,
+            from_loc: cond_loc,
             cond_val,
             dest_loc,
         })
     }
 
-    pub fn from_slice(slice: &str) -> Result<Self> {
+    pub fn parse_jump_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+        if let Some(simple_action) = GuardParseError::to_eyre(Self::parse_simple_guard(line))? {
+            return Ok(simple_action);
+        }
+
+        const REG_BR_PREFIX: &str = "Br Guard:";
+        let prefix = get_prefix(line)?;
+        if prefix != REG_BR_PREFIX {
+            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+                "Line does not match regular branch guard prefix: {}",
+                line
+            )));
+        }
+
+        let line_cont = line[prefix.len()..].trim();
+        if let Some(idx) = line_cont.find(char::is_whitespace) {
+            let value_hit_str = &line_cont[..idx];
+            let intra_act_str = line_cont[idx..].trim();
+
+            // parse value hit
+            let va_loc = SrcLoc::from_str(value_hit_str)?;
+            let br_act_type = JumpActionType::BrGuard { val_loc: va_loc };
+
+            // parse intra action
+            let br_act = JumpAction::from_slice(intra_act_str, br_act_type)?;
+
+            return Ok(br_act);
+        }
+
+        // if line does not match any known action, return error
+        Err(GuardParseError::from(eyre::eyre!(
+            "Line does not match any known action format: {}",
+            line
+        )))
+    }
+
+    pub fn from_slice(slice: &str, act_type: JumpActionType) -> Result<Self> {
         // example: /path/to/file.c:123:45 1 /path/to/dest.c:67:89
         let parts: Vec<&str> = slice.split_whitespace().collect();
         if parts.len() != 3 {
@@ -332,8 +376,8 @@ impl JumpAction {
         let dest_loc = SrcLoc::from_str(parts[2])?;
 
         Ok(Self {
-            intra_type: JumpActionType::BrGuard, // default type, can be changed later
-            cond_loc,
+            intra_type: act_type,
+            from_loc: cond_loc,
             cond_val,
             dest_loc,
         })
@@ -660,6 +704,7 @@ impl RecurAction {
 pub enum ExecAction {
     Func(FuncAction),
     Intra(JumpAction),
+    Value(UBVHit),
     Loop(LoopAction),
     Recur(RecurAction),
     Thread(ThreadAction),
@@ -690,6 +735,7 @@ impl DotId for ExecAction {
     fn get_dot_id(&self) -> String {
         let cnt = incre_dot_counter();
         match self {
+            ExecAction::Value(_) => format!("UBVHit_Action_{}", cnt),
             ExecAction::Func(func_act) => func_act.get_dot_id(cnt),
             ExecAction::Intra(intra_act) => intra_act.get_dot_id(cnt),
             ExecAction::Loop(_) => format!("Loop_Action_{}", cnt),
@@ -705,6 +751,7 @@ impl DotId for ExecAction {
 impl fmt::Debug for ExecAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ExecAction::Value(ubv_hit) => write!(f, "UBVHit: {:?}", ubv_hit),
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
             ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),

@@ -288,8 +288,8 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
   // collect message: br src location , dest src location
   std::string src_path = get_src_path(M);
 
-  SrcLoc br_loc = get_src_loc_with_path(jmp_inst, src_path);
-  if (!br_loc.has_value()) {
+  SrcLoc from_loc = get_src_loc_with_path(jmp_inst, src_path);
+  if (!from_loc.has_value()) {
     errs() << RED << "[Error] " << RESET
            << "Conditional instruction has no debug location: ";
     jmp_inst->print(errs());
@@ -342,7 +342,7 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
     }
   }
 br_rec:
-  ss << br_loc << " " << br_val << " " << dest_loc;
+  ss << from_loc << " " << br_val << " " << dest_loc;
   std::string rec = ss.str();
 
   // add declaration of logging function
@@ -893,7 +893,7 @@ bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
             Value *tid_ptr = call_inst->getArgOperand(0);
 
             std::stringstream ss;
-            ss << "Thread Creation: " << call_loc;
+            ss << call_loc;
             std::string loc = ss.str();
 
             // create instrumentation IR builder

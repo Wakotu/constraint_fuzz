@@ -6,9 +6,9 @@ use std::{
 
 use crate::{
     analysis::constraint::inter::{
-        exec_tree::{
-            action::ExecAction, incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr,
-            ThreadTree,
+        exec_tree::action::ExecAction,
+        exec_tree::thread_tree::{
+            incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr, ThreadTree,
         },
         loc::SrcLoc,
     },
@@ -452,7 +452,16 @@ impl ThreadTree {
                 );
             }
         }
-        self.show_common_parent_for_mcf(&most_called_entry.0)?;
+        match self.show_common_parent_for_mcf(&most_called_entry.0) {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!(
+                    "Failed to find common parent for most called function {}: {}",
+                    most_called_entry.0,
+                    e
+                );
+            }
+        }
         // self.show_common_parent_for_mcf("av1_read_coeffs_txb")?;
 
         Ok(())
@@ -606,7 +615,22 @@ impl ThreadTree {
             .ok_or_else(|| eyre::eyre!("Function {} not found in the execution tree", func_name))?;
 
         let common_parent_ptr =
-            self.get_common_parent_ptr(func_ptr_a.clone(), func_ptr_b.clone())?;
+            match self.get_common_parent_ptr(func_ptr_a.clone(), func_ptr_b.clone()) {
+                Ok(common_parent_ptr) => {
+                    log::info!(
+                        "Common parent for functions {} and {}: {}",
+                        func_ptr_a.borrow().get_func_name_or_init(),
+                        func_ptr_b.borrow().get_func_name_or_init(),
+                        common_parent_ptr.borrow().get_func_name_or_init()
+                    );
+                    common_parent_ptr.clone()
+                }
+                Err(e) => {
+                    log::error!("Error finding common parent: {}", e);
+                    return Err(e);
+                }
+            };
+
         Self::show_chain_to_root(common_parent_ptr.clone());
         Ok(())
     }
