@@ -8,6 +8,7 @@ use color_eyre::eyre::Result;
 
 pub mod exec_rec;
 pub mod inter;
+pub mod intra;
 
 /**
  * This module is used to get dataflow information of a specified constraint.

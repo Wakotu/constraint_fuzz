@@ -32,5 +32,6 @@ where
   childStmt.getParent() = block
 // and block.getEnclosingFunction().getName() = "set_error"
 select block.getLocation() as block_location, blockType,
-  childStmt.getLocation() as child_stmt_location, getStmtType(childStmt),
-  block.getEnclosingFunction().getName(), block.getFile().getAbsolutePath() as file_path
+  childStmt.getLocation() as child_stmt_location, getStmtType(childStmt) as child_stmt_type,
+  block.getEnclosingFunction().getName() as function_name,
+  block.getFile().getAbsolutePath() as file_path
