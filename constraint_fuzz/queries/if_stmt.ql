@@ -3,7 +3,7 @@ import modules.mod
 
 from IfStmt ifStmt, Stmt thenStmt
 where ifStmt.getThen() = thenStmt
-select ifStmt.getLocation() as if_stmt_location, getIfType(ifStmt),
+select ifStmt.getLocation() as if_stmt_location, getIfType(ifStmt) as if_type,
   ifStmt.getCondition().getLocation() as condition_location,
   thenStmt.getLocation() as then_stmt_location, getStmtType(thenStmt) as then_stmt_type,
   ifStmt.getEnclosingFunction().getName() as function,

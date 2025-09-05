@@ -22,7 +22,7 @@ class MyWhileStmt extends Stmt {
 
 from MyWhileStmt whileStmt, Stmt stmt
 where whileStmt.getStmt() = stmt
-select whileStmt.getLocation() as while_stmt_location, whileStmt.getType(),
+select whileStmt.getLocation() as while_stmt_location, whileStmt.getType() as while_type,
   whileStmt.getCondition().getLocation() as condition_location, stmt.getLocation() as body_location,
-  getStmtType(stmt) as stmt_type, whileStmt.getEnclosingFunction().getName(),
+  getStmtType(stmt) as body_type, whileStmt.getEnclosingFunction().getName() as function_name,
   whileStmt.getFile().getAbsolutePath() as file_path

@@ -386,6 +386,7 @@ dependencies = [
  "flexi_logger 0.25.6",
  "log",
  "md5",
+ "my_macros",
  "num_cpus",
  "once_cell",
  "paste",
@@ -1583,6 +1584,14 @@ dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "my_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]

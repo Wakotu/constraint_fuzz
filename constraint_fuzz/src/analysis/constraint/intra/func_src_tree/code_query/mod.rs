@@ -4,33 +4,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
-use crate::analysis::constraint::intra::func_src_tree::{LocParseError, QLLoc, StmtType};
+use crate::analysis::constraint::intra::func_src_tree::stmts::{LocParseError, QLLoc, StmtType};
 use crate::deopt::Deopt;
 
 pub mod block_query;
+pub mod if_query;
+pub mod switch_query;
+pub mod while_query;
 
 impl Deopt {
     pub fn get_codeql_db_dir(&self) -> Result<PathBuf> {
         let lib_build_dir = self.get_library_build_dir()?;
         let res = lib_build_dir.join("codeql_db");
         Ok(res)
-    }
-}
-
-#[derive(PartialEq, Eq, Hash)]
-struct ChildEnty {
-    loc: QLLoc,
-    stmt_type: StmtType,
-}
-
-impl ChildEnty {
-    pub fn from_loc_and_type(
-        loc_str: &str,
-        type_str: &str,
-    ) -> std::result::Result<Self, LocParseError> {
-        let loc = QLLoc::from_str(loc_str)?;
-        let stmt_type = StmtType::from_str(type_str);
-        Ok(Self { loc, stmt_type })
     }
 }
 
@@ -115,7 +101,8 @@ impl<V: Default> FileFuncTable<V> {
         }
     }
 
-    pub fn get_value_mut(&mut self, file_path: PathBuf, func_name: &str) -> &mut V {
+    pub fn get_value_mut(&mut self, file_path: &str, func_name: &str) -> &mut V {
+        let file_path = PathBuf::from(file_path);
         self.data
             .entry(file_path)
             .or_insert_with(HashMap::new)
