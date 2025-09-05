@@ -1,10 +1,12 @@
 use color_eyre::eyre::Result;
+use eyre::bail;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
 use crate::analysis::constraint::intra::func_src_tree::stmts::{LocParseError, QLLoc, StmtType};
+use crate::deopt::utils::buffer_read_to_bytes;
 use crate::deopt::Deopt;
 
 pub mod block_query;
@@ -39,32 +41,52 @@ impl CodeQLRunner {
         Ok(query_path)
     }
 
-    pub fn run_query<P: AsRef<Path>>(&self, query_path: P) -> Result<Vec<u8>> {
+    fn get_csv_path(&self, query_name: &str) -> Result<PathBuf> {
+        let query_path = self.get_query_path(query_name)?;
+        let csv_dir = query_path.parent().ok_or_else(|| {
+            eyre::eyre!(
+                "Failed to get parent directory of query path: {:?}",
+                query_path
+            )
+        })?;
+        let csv_path = csv_dir.join(format!("{}.csv", query_name.trim_end_matches(".ql")));
+        Ok(csv_path)
+    }
+
+    pub fn run_query(&self, query_name: &str) -> Result<Vec<u8>> {
+        let query_path = self.get_query_path(query_name)?;
         let db_dir = self.deopt.get_codeql_db_dir()?;
         let bqrs_file = NamedTempFile::new()?;
         let bqrs_path = bqrs_file.path().as_os_str();
+        let csv_path = self.get_csv_path(query_name)?;
 
-        // run the query
-        let status = Command::new("codeql")
-            .arg("query")
-            .arg("run")
-            .arg(query_path.as_ref())
-            .arg("--database")
-            .arg(db_dir)
-            .arg("--output")
-            .arg(bqrs_path)
-            .status()?;
+        if !csv_path.is_file() {
+            // run the query
+            let status = Command::new("codeql")
+                .arg("query")
+                .arg("run")
+                .arg(query_path)
+                .arg("--database")
+                .arg(db_dir)
+                .arg("--output")
+                .arg(bqrs_path)
+                .status()?;
+            assert!(status.success(), "CodeQL query execution failed");
 
-        assert!(status.success(), "CodeQL query execution failed");
+            // decode
+            let status = Command::new("codeql")
+                .arg("bqrs")
+                .arg("decode")
+                .arg(bqrs_path)
+                .arg("--format=csv")
+                .arg("--output")
+                .arg(&csv_path)
+                .status()?;
+            assert!(status.success(), "CodeQL bqrs decode failed");
+        }
 
-        // decode
-        let output = Command::new("codeql")
-            .arg("bqrs")
-            .arg("decode")
-            .arg(bqrs_path)
-            .arg("--format=csv")
-            .output()?;
-        Ok(output.stdout)
+        let bytes = buffer_read_to_bytes(&csv_path)?;
+        Ok(bytes)
     }
 
     pub fn csv_parse<T>(csv_data: &Vec<u8>) -> Result<Vec<T>>
@@ -84,8 +106,7 @@ impl CodeQLRunner {
     where
         T: serde::de::DeserializeOwned,
     {
-        let query_path = self.get_query_path(query_name)?;
-        let csv_data = self.run_query(query_path)?;
+        let csv_data = self.run_query(query_name)?;
         let results = Self::csv_parse(&csv_data)?;
         Ok(results)
     }
@@ -126,7 +147,7 @@ mod tests {
         let deopt = Deopt::new("libaom")?;
         let runner = CodeQLRunner::new(deopt);
 
-        let bytes = runner.run_query("/struct_fuzz/constraint_fuzz/queries/block_stmt.ql")?;
+        let bytes = runner.run_query("block_stmt.ql")?;
         log::debug!("Query output:\n{}", String::from_utf8_lossy(&bytes));
         Ok(())
     }
