@@ -5,6 +5,7 @@ use std::{collections::HashMap, path::PathBuf};
 use eyre::bail;
 
 use crate::analysis::constraint::intra::func_src_tree::code_query::{
+    for_stmt::{ForRecord, InitForMap},
     if_query::{ElseRecMap, ElseRecord, IfRecord},
     while_query::WhileRecord,
 };
@@ -303,6 +304,69 @@ impl WhileStmt {
             loc,
             while_type,
             cond_loc,
+            body_entry,
+        })
+    }
+}
+
+pub enum ForType {
+    InitFor,
+    NoInitFor,
+}
+
+impl ForType {
+    pub fn from_str(type_str: &str) -> Result<Self> {
+        match type_str {
+            "InitFor" => Ok(ForType::InitFor),
+            "NoInitFor" => Ok(ForType::NoInitFor),
+            _ => bail!("Unknown for type: {}", type_str),
+        }
+    }
+}
+
+#[derive(EquivByLoc)]
+pub struct ForStmt {
+    loc: QLLoc,
+    for_type: ForType,
+    init_loc: Option<QLLoc>,
+    cond_loc: QLLoc,
+    update_loc: QLLoc,
+    body_entry: ChildEntry,
+}
+
+impl ForStmt {
+    pub fn from_for_init_record(
+        record: &ForRecord,
+        inti_map: &InitForMap,
+    ) -> std::result::Result<Self, LocParseError> {
+        let loc = QLLoc::from_str(&record.loc)?;
+        let for_type = ForType::from_str(&record.for_type)
+            .map_err(|e| LocParseError::FormatErr(e.to_string()))?;
+
+        let cond_loc = QLLoc::from_str(&record.cond_loc)?;
+        let update_loc = QLLoc::from_str(&record.update_loc)?;
+        let body_entry = ChildEntry::from_loc_and_type(&record.body_loc, &record.body_type)?;
+
+        let init_loc = match for_type {
+            ForType::InitFor => {
+                if let Some(init_loc_str) = inti_map.get(&record.loc) {
+                    Some(QLLoc::from_str(init_loc_str)?)
+                } else {
+                    return Err(LocParseError::FormatErr(format!(
+                        "For statement at {} is of type InitFor but no init_loc found in InitForMap",
+                        record.loc
+                    )));
+                }
+            }
+            ForType::NoInitFor => None,
+        };
+
+        Ok(Self {
+            loc,
+            for_type,
+            init_loc,
+            cond_loc,
+            update_loc,
             body_entry,
         })
     }

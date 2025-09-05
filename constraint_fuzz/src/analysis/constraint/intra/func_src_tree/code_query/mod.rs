@@ -8,6 +8,7 @@ use crate::analysis::constraint::intra::func_src_tree::stmts::{LocParseError, QL
 use crate::deopt::Deopt;
 
 pub mod block_query;
+pub mod for_stmt;
 pub mod if_query;
 pub mod switch_query;
 pub mod while_query;
