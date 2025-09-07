@@ -10,10 +10,12 @@ use crate::deopt::utils::buffer_read_to_bytes;
 use crate::deopt::Deopt;
 
 pub mod block_query;
-pub mod for_stmt;
+pub mod for_query;
 pub mod if_query;
 pub mod switch_query;
 pub mod while_query;
+
+pub mod file_func_query;
 
 impl Deopt {
     pub fn get_codeql_db_dir(&self) -> Result<PathBuf> {
@@ -116,13 +118,22 @@ pub struct FileFuncTable<V> {
     data: HashMap<PathBuf, HashMap<String, V>>,
 }
 
-impl<V: Default> FileFuncTable<V> {
+impl<V> FileFuncTable<V> {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
         }
     }
 
+    pub fn insert(&mut self, file_path: &Path, func_name: &str, value: V) {
+        self.data
+            .entry(file_path.to_owned())
+            .or_insert_with(HashMap::new)
+            .insert(func_name.to_owned(), value);
+    }
+}
+
+impl<V: Default> FileFuncTable<V> {
     pub fn get_value_mut(&mut self, file_path: &str, func_name: &str) -> &mut V {
         let file_path = PathBuf::from(file_path);
         self.data
@@ -130,6 +141,12 @@ impl<V: Default> FileFuncTable<V> {
             .or_insert_with(HashMap::new)
             .entry(func_name.to_owned())
             .or_insert_with(V::default)
+    }
+
+    pub fn get_value<P: AsRef<Path>>(&self, file_path: P, func_name: &str) -> Option<&V> {
+        self.data
+            .get(file_path.as_ref())
+            .and_then(|func_map| func_map.get(func_name))
     }
 }
 

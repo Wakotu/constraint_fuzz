@@ -195,7 +195,7 @@ pub fn parse_config() -> Result<()> {
 }
 
 
-use clap::{ Parser, ValueEnum};
+use clap::{ builder::Str, Parser, ValueEnum};
 
 use crate::Deopt;
 /// Simple program to greet a person
@@ -334,6 +334,8 @@ pub struct LibConfig {
     pub static_lib_name: String,
     /// the name of the static linked library.
     pub dyn_lib_name: String,
+    /// name of directores that should be ignored at QLLoc Parsing
+    pub ignore_dir: Option<Vec<String>>,
     /// vec of functions that are banned.
     pub ban: Option<Vec<String>>,
     /// if the fuzzer input should be terminated with null.

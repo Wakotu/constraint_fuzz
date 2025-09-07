@@ -4,14 +4,18 @@ use std::{collections::HashMap, path::PathBuf};
 
 use eyre::bail;
 
-use crate::analysis::constraint::intra::func_src_tree::code_query::{
-    for_stmt::{ForRecord, InitForMap},
-    if_query::{ElseRecMap, ElseRecord, IfRecord},
-    while_query::WhileRecord,
+use crate::{
+    analysis::constraint::intra::func_src_tree::code_query::{
+        for_query::{ForRecord, InitForMap},
+        if_query::{ElseRecMap, ElseRecord, IfRecord},
+        while_query::WhileRecord,
+    },
+    config,
+    deopt::Deopt,
 };
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct QLLoc {
-    file_path: PathBuf,
+    pub file_path: PathBuf,
     start_line: usize,
     start_column: usize,
     end_line: usize,
@@ -53,7 +57,31 @@ impl QLLoc {
             )));
         }
 
-        let file_path = PathBuf::from(parts[0]);
+        let file_path_str = parts[0];
+
+        // check validity of file path
+        let deopt = Deopt::new(config::get_library_name()).unwrap();
+
+        let proj_name = deopt.project_name;
+        if !file_path_str.contains(&proj_name) {
+            return Err(LocParseError::ValueErr(format!(
+                "File path does not contain project name '{}': {}",
+                proj_name, file_path_str
+            )));
+        }
+
+        if let Some(ignore_dirs) = &deopt.config.ignore_dir {
+            for ignore_dir in ignore_dirs {
+                if file_path_str.contains(ignore_dir) {
+                    return Err(LocParseError::ValueErr(format!(
+                        "File path is in ignored directory '{}': {}",
+                        ignore_dir, file_path_str
+                    )));
+                }
+            }
+        }
+
+        let file_path = PathBuf::from(file_path_str);
         // judge exists
         if !file_path.exists() {
             return Err(LocParseError::ValueErr(format!(
@@ -84,7 +112,7 @@ impl QLLoc {
     }
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub enum StmtType {
     If,
     Switch,
@@ -115,8 +143,8 @@ impl StmtType {
     }
 }
 
-#[derive(PartialEq, Eq, Hash)]
-pub enum BLockType {
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub enum BlockType {
     If,
     Else,
     Switch,
@@ -127,23 +155,23 @@ pub enum BLockType {
     Scoped,
 }
 
-impl BLockType {
+impl BlockType {
     pub fn from_str(type_str: &str) -> Result<Self> {
         match type_str {
-            "IfBlock" => Ok(BLockType::If),
-            "ElseBlock" => Ok(BLockType::Else),
-            "SwitchBlock" => Ok(BLockType::Switch),
-            "ForBlock" => Ok(BLockType::For),
-            "WhileBlock" => Ok(BLockType::While),
-            "DoBlock" => Ok(BLockType::Do),
-            "FunctionBlock" => Ok(BLockType::Function),
-            "ScopedBlock" => Ok(BLockType::Scoped),
+            "IfBlock" => Ok(BlockType::If),
+            "ElseBlock" => Ok(BlockType::Else),
+            "SwitchBlock" => Ok(BlockType::Switch),
+            "ForBlock" => Ok(BlockType::For),
+            "WhileBlock" => Ok(BlockType::While),
+            "DoBlock" => Ok(BlockType::Do),
+            "FunctionBlock" => Ok(BlockType::Function),
+            "ScopedBlock" => Ok(BlockType::Scoped),
             _ => bail!("Unknown block type: {}", type_str),
         }
     }
 }
 
-#[derive(EquivByLoc)]
+#[derive(EquivByLoc, Debug)]
 pub struct ChildEntry {
     loc: QLLoc,
     stmt_type: StmtType,
@@ -158,13 +186,20 @@ impl ChildEntry {
         let stmt_type = StmtType::from_str(type_str);
         Ok(Self { loc, stmt_type })
     }
+
+    pub fn from_block_stmt(block: &BlockStmt) -> Self {
+        Self {
+            loc: block.loc.clone(),
+            stmt_type: StmtType::Block,
+        }
+    }
 }
 
 /// data stmt
-#[derive(EquivByLoc)]
+#[derive(EquivByLoc, Debug)]
 pub struct BlockStmt {
     loc: QLLoc,
-    block_type: BLockType,
+    block_type: BlockType,
 }
 
 impl BlockStmt {
@@ -174,8 +209,12 @@ impl BlockStmt {
     ) -> std::result::Result<Self, LocParseError> {
         let loc = QLLoc::from_str(loc_str)?;
         let block_type =
-            BLockType::from_str(type_str).map_err(|e| LocParseError::FormatErr(e.to_string()))?;
+            BlockType::from_str(type_str).map_err(|e| LocParseError::FormatErr(e.to_string()))?;
         Ok(Self { loc, block_type })
+    }
+
+    pub fn is_function_block(&self) -> bool {
+        matches!(self.block_type, BlockType::Function)
     }
 }
 
@@ -370,8 +409,4 @@ impl ForStmt {
             body_entry,
         })
     }
-}
-
-pub enum StmtNode {
-    // to be continued
 }

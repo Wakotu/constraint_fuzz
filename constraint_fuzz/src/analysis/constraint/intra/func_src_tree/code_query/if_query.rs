@@ -36,8 +36,8 @@ pub struct ElseRecord {
     pub file_path: String,
 }
 
-type IfSet = HashSet<IfStmt>;
-type IfPool = FileFuncTable<IfSet>;
+pub type IfSet = HashSet<IfStmt>;
+pub type IfPool = FileFuncTable<IfSet>;
 
 pub type ElseRecMap = HashMap<String, ElseRecord>; // key is IfRecord.loc
 

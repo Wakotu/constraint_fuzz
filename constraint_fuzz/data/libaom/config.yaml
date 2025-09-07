@@ -3,3 +3,10 @@ static_lib_name: libaom.a
 dyn_lib_name: libaom.so
 ban:
   - aom_codec_control_\w+
+ignore_dir:
+  - test
+  - examples
+  - docs
+  - build
+  - third_party
+  - tools

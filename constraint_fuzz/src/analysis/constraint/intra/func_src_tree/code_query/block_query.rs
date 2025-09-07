@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use color_eyre::eyre::Result;
 use eyre::bail;
@@ -29,8 +32,9 @@ impl BlockRecord {
     }
 }
 
-struct BlockMap {
-    data: HashMap<BlockStmt, ChildEntry>,
+// corresponds to a function
+pub struct BlockMap {
+    data: HashMap<BlockStmt, HashSet<ChildEntry>>,
 }
 
 impl Default for BlockMap {
@@ -47,16 +51,32 @@ impl BlockMap {
     }
 
     pub fn insert(&mut self, block: BlockStmt, child: ChildEntry) {
-        self.data.insert(block, child);
+        self.data
+            .entry(block)
+            .or_insert_with(HashSet::new)
+            .insert(child);
     }
 
-    pub fn get(&self, block: &BlockStmt) -> Option<&ChildEntry> {
-        self.data.get(block)
+    pub fn get_root_entry(&self) -> Result<Option<ChildEntry>> {
+        let mut res = None;
+        for block_stmt in self.data.keys() {
+            if block_stmt.is_function_block() {
+                if !res.is_none() {
+                    bail!(
+                        "Warning: Multiple function blocks found in BlockMap. Existing root: {:?}, New root: {:?}",
+                        res,
+                        block_stmt
+                    );
+                }
+                res = Some(ChildEntry::from_block_stmt(block_stmt));
+            }
+        }
+        Ok(res)
     }
 }
 
-type BlockEntry = (BlockStmt, ChildEntry);
-type BlockPool = FileFuncTable<BlockMap>;
+pub type BlockEntry = (BlockStmt, ChildEntry);
+pub type BlockPool = FileFuncTable<BlockMap>;
 
 impl CodeQLRunner {
     fn get_records(&self) -> Result<Vec<BlockRecord>> {
