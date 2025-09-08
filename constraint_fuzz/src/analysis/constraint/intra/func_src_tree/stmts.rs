@@ -1,12 +1,12 @@
 use color_eyre::eyre::Result;
 use my_macros::EquivByLoc;
-use std::{collections::HashMap, path::PathBuf};
+use std::{borrow::Borrow, collections::HashMap, path::PathBuf};
 
 use eyre::bail;
 
 use crate::{
     analysis::constraint::intra::func_src_tree::code_query::{
-        for_query::{ForRecord, InitForMap},
+        for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
         if_query::{ElseRecMap, ElseRecord, IfRecord},
         while_query::WhileRecord,
     },
@@ -27,7 +27,35 @@ pub enum LocParseError {
     ValueErr(String),
 }
 
+impl PartialOrd for QLLoc {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.compare(other))
+    }
+}
+
+impl Ord for QLLoc {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.compare(other)
+    }
+}
+
 impl QLLoc {
+    pub fn compare(&self, other: &QLLoc) -> std::cmp::Ordering {
+        match self.file_path.cmp(&other.file_path) {
+            std::cmp::Ordering::Equal => match self.start_line.cmp(&other.start_line) {
+                std::cmp::Ordering::Equal => match self.start_column.cmp(&other.start_column) {
+                    std::cmp::Ordering::Equal => match self.end_line.cmp(&other.end_line) {
+                        std::cmp::Ordering::Equal => self.end_column.cmp(&other.end_column),
+                        ord => ord,
+                    },
+                    ord => ord,
+                },
+                ord => ord,
+            },
+            ord => ord,
+        }
+    }
+
     fn parse_num(num_str: &str, num_name: &str) -> std::result::Result<usize, LocParseError> {
         let num: usize = num_str.parse::<usize>().map_err(|e| {
             LocParseError::FormatErr(format!(
@@ -143,7 +171,7 @@ impl StmtType {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum BlockType {
     If,
     Else,
@@ -173,8 +201,20 @@ impl BlockType {
 
 #[derive(EquivByLoc, Debug)]
 pub struct ChildEntry {
-    loc: QLLoc,
-    stmt_type: StmtType,
+    pub loc: QLLoc,
+    pub stmt_type: StmtType,
+}
+
+impl PartialOrd for ChildEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.loc.cmp(&other.loc))
+    }
+}
+
+impl Ord for ChildEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.loc.cmp(&other.loc)
+    }
 }
 
 impl ChildEntry {
@@ -198,8 +238,14 @@ impl ChildEntry {
 /// data stmt
 #[derive(EquivByLoc, Debug)]
 pub struct BlockStmt {
-    loc: QLLoc,
-    block_type: BlockType,
+    pub loc: QLLoc,
+    pub block_type: BlockType,
+}
+
+impl Borrow<QLLoc> for BlockStmt {
+    fn borrow(&self) -> &QLLoc {
+        &self.loc
+    }
 }
 
 impl BlockStmt {
@@ -237,11 +283,17 @@ impl IfType {
 /// Struct stmt
 #[derive(EquivByLoc)]
 pub struct IfStmt {
-    loc: QLLoc,
-    if_type: IfType,
-    condition_loc: QLLoc,
-    then_entry: ChildEntry,
-    else_entry: Option<ChildEntry>,
+    pub loc: QLLoc,
+    pub if_type: IfType,
+    pub cond_loc: QLLoc,
+    pub then_entry: ChildEntry,
+    pub else_entry: Option<ChildEntry>,
+}
+
+impl Borrow<QLLoc> for IfStmt {
+    fn borrow(&self) -> &QLLoc {
+        &self.loc
+    }
 }
 
 impl IfStmt {
@@ -283,7 +335,7 @@ impl IfStmt {
         Ok(Self {
             loc,
             if_type,
-            condition_loc,
+            cond_loc: condition_loc,
             then_entry,
             else_entry,
         })
@@ -293,8 +345,14 @@ impl IfStmt {
 /// data stmt
 #[derive(EquivByLoc)]
 pub struct SwitchStmt {
-    loc: QLLoc,
-    expr_loc: QLLoc,
+    pub loc: QLLoc,
+    pub expr_loc: QLLoc,
+}
+
+impl Borrow<QLLoc> for SwitchStmt {
+    fn borrow(&self) -> &QLLoc {
+        &self.loc
+    }
 }
 
 impl SwitchStmt {
@@ -308,6 +366,7 @@ impl SwitchStmt {
     }
 }
 
+#[derive(Clone)]
 pub enum WhileType {
     While,
     Do,
@@ -325,10 +384,16 @@ impl WhileType {
 
 #[derive(EquivByLoc)]
 pub struct WhileStmt {
-    loc: QLLoc,
-    while_type: WhileType,
-    cond_loc: QLLoc,
-    body_entry: ChildEntry,
+    pub loc: QLLoc,
+    pub while_type: WhileType,
+    pub cond_loc: QLLoc,
+    pub body_entry: ChildEntry,
+}
+
+impl Borrow<QLLoc> for WhileStmt {
+    fn borrow(&self) -> &QLLoc {
+        &self.loc
+    }
 }
 
 impl WhileStmt {
@@ -365,44 +430,45 @@ impl ForType {
 
 #[derive(EquivByLoc)]
 pub struct ForStmt {
-    loc: QLLoc,
-    for_type: ForType,
-    init_loc: Option<QLLoc>,
-    cond_loc: QLLoc,
-    update_loc: QLLoc,
-    body_entry: ChildEntry,
+    pub loc: QLLoc,
+    pub init_loc: Option<QLLoc>,
+    pub cond_loc: Option<QLLoc>,
+    pub update_loc: Option<QLLoc>,
+    pub body_entry: ChildEntry,
+}
+
+impl Borrow<QLLoc> for ForStmt {
+    fn borrow(&self) -> &QLLoc {
+        &self.loc
+    }
 }
 
 impl ForStmt {
-    pub fn from_for_init_record(
+    pub fn from_for_record_and_maps(
         record: &ForRecord,
-        inti_map: &InitForMap,
+        init_map: &ForInitMap,
+        cond_map: &ForCondMap,
+        update_map: &ForUpdateMap,
     ) -> std::result::Result<Self, LocParseError> {
         let loc = QLLoc::from_str(&record.loc)?;
-        let for_type = ForType::from_str(&record.for_type)
-            .map_err(|e| LocParseError::FormatErr(e.to_string()))?;
 
-        let cond_loc = QLLoc::from_str(&record.cond_loc)?;
-        let update_loc = QLLoc::from_str(&record.update_loc)?;
         let body_entry = ChildEntry::from_loc_and_type(&record.body_loc, &record.body_type)?;
 
-        let init_loc = match for_type {
-            ForType::InitFor => {
-                if let Some(init_loc_str) = inti_map.get(&record.loc) {
-                    Some(QLLoc::from_str(init_loc_str)?)
-                } else {
-                    return Err(LocParseError::FormatErr(format!(
-                        "For statement at {} is of type InitFor but no init_loc found in InitForMap",
-                        record.loc
-                    )));
-                }
-            }
-            ForType::NoInitFor => None,
+        let init_loc = match init_map.get(&record.loc) {
+            Some(init_loc_str) => Some(QLLoc::from_str(init_loc_str)?),
+            None => None,
         };
 
+        let cond_loc = match cond_map.get(&record.loc) {
+            Some(cond_loc_str) => Some(QLLoc::from_str(cond_loc_str)?),
+            None => None,
+        };
+        let update_loc = match update_map.get(&record.loc) {
+            Some(update_loc_str) => Some(QLLoc::from_str(update_loc_str)?),
+            None => None,
+        };
         Ok(Self {
             loc,
-            for_type,
             init_loc,
             cond_loc,
             update_loc,

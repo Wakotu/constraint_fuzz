@@ -1,11 +1,10 @@
 import cpp
 
-string getForType(ForStmt forStmt) {
-  if exists(Stmt stmt | stmt = forStmt.getInitialization())
-  then result = "InitFor"
-  else result = "NoInitFor"
-}
-
+// string getForType(ForStmt forStmt) {
+//   if exists(Stmt stmt | stmt = forStmt.getInitialization())
+//   then result = "InitFor"
+//   else result = "NoInitFor"
+// }
 string getIfType(IfStmt ifStmt) { if ifStmt.hasElse() then result = "If-Else" else result = "If" }
 
 string getStmtType(Stmt stmt) {

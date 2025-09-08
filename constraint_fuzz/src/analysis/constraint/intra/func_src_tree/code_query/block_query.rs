@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{CodeQLRunner, FileFuncTable},
-    stmts::{BlockStmt, ChildEntry, LocParseError},
+    stmts::{BlockStmt, ChildEntry, LocParseError, QLLoc},
 };
 
 const BLOCK_QUERY_NAME: &str = "block_stmt.ql";
@@ -55,6 +55,10 @@ impl BlockMap {
             .entry(block)
             .or_insert_with(HashSet::new)
             .insert(child);
+    }
+
+    pub fn get_key_val(&self, loc: &QLLoc) -> Option<(&BlockStmt, &HashSet<ChildEntry>)> {
+        self.data.get_key_value(loc)
     }
 
     pub fn get_root_entry(&self) -> Result<Option<ChildEntry>> {
