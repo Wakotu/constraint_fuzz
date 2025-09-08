@@ -16,37 +16,26 @@ use crate::analysis::constraint::intra::func_src_tree::{
 use color_eyre::eyre::Result;
 use eyre::bail;
 
-pub struct SrcTreeBuilder {
+pub struct SrcForestBuilder {
     func_map: FuncMap,
     block_pool: BlockPool,
     if_pool: IfPool,
-    switch_poo: SwitchPool,
+    switch_pool: SwitchPool,
     while_pool: WhilePool,
     for_pool: ForPool,
 }
 
 pub type FuncSrcForest = FileFuncTable<FuncSrcTree>;
 
-impl SrcTreeBuilder {
+impl SrcForestBuilder {
     // TODO: initialization method
 
     // other methods
 
-    fn create_node(
-        cur_entry: &ChildEntry,
-        block_map: &BlockMap,
-        if_set_op: Option<&IfSet>,
-        switch_map_op: Option<&SwitchMap>,
-        while_set_op: Option<&WhileSet>,
-        for_set_op: Option<&ForSet>,
-    ) -> Result<SharedStmtNodePtr> {
-        todo!()
-    }
-
     pub fn build_tree(&self, file_path: &Path, func_name: &str) -> Result<Option<FuncSrcTree>> {
         let block_map_op = self.block_pool.get_value(file_path, func_name);
         let if_set_op = self.if_pool.get_value(file_path, func_name);
-        let switch_map_op = self.switch_poo.get_value(file_path, func_name);
+        let switch_map_op = self.switch_pool.get_value(file_path, func_name);
         let while_set_op = self.while_pool.get_value(file_path, func_name);
         let for_set_op = self.for_pool.get_value(file_path, func_name);
 
@@ -67,7 +56,17 @@ impl SrcTreeBuilder {
             }
         };
 
-        todo!()
+        let builder = SrcTreeBuilder::new(
+            &root_entry,
+            block_map,
+            if_set_op,
+            switch_map_op,
+            while_set_op,
+            for_set_op,
+        );
+
+        let root_ptr = builder.create_node_recur()?;
+        Ok(Some(FuncSrcTree::new(root_ptr)))
     }
 
     pub fn build_forest(&self) -> Result<FuncSrcForest> {
@@ -83,5 +82,39 @@ impl SrcTreeBuilder {
             }
         }
         Ok(forest)
+    }
+}
+
+struct SrcTreeBuilder<'a> {
+    cur_entry: &'a ChildEntry,
+    block_map: &'a BlockMap,
+    if_set_op: Option<&'a IfSet>,
+    switch_map_op: Option<&'a SwitchMap>,
+    while_set_op: Option<&'a WhileSet>,
+    for_set_op: Option<&'a ForSet>,
+}
+
+impl<'a> SrcTreeBuilder<'a> {
+    fn new(
+        cur_entry: &'a ChildEntry,
+        block_map: &'a BlockMap,
+        if_set_op: Option<&'a IfSet>,
+        switch_map_op: Option<&'a SwitchMap>,
+        while_set_op: Option<&'a WhileSet>,
+        for_set_op: Option<&'a ForSet>,
+    ) -> Self {
+        Self {
+            cur_entry,
+            block_map,
+            if_set_op,
+            switch_map_op,
+            while_set_op,
+            for_set_op,
+        }
+    }
+
+    pub fn create_node_recur(&self) -> Result<SharedStmtNodePtr> {
+        // TODO: recursive creation
+        todo!()
     }
 }

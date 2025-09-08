@@ -76,3 +76,13 @@ pub mod cf_mod {
 pub struct FuncSrcTree {
     root: SharedStmtNodePtr,
 }
+
+impl FuncSrcTree {
+    pub fn new(root: SharedStmtNodePtr) -> Self {
+        Self { root }
+    }
+
+    pub fn get_root(&self) -> SharedStmtNodePtr {
+        Rc::clone(&self.root)
+    }
+}
