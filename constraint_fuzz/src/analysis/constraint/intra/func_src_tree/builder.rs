@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use crate::analysis::constraint::{
     exec_rec::case_map,
@@ -10,7 +10,7 @@ use crate::analysis::constraint::{
             if_query::{IfPool, IfSet},
             switch_query::{SwitchMap, SwitchPool},
             while_query::{WhilePool, WhileSet},
-            FileFuncTable,
+            CodeQLRunner, FileFuncTable,
         },
         nodes::{FuncSrcTree, SharedStmtNodePtr, StmtNode},
         stmts::{ChildEntry, StmtType},
@@ -31,7 +31,23 @@ pub struct SrcForestBuilder {
 pub type FuncSrcForest = FileFuncTable<FuncSrcTree>;
 
 impl SrcForestBuilder {
-    // TODO: initialization method
+    pub fn from_codeql_runner(runner: &CodeQLRunner) -> Result<Self> {
+        let func_map = runner.get_func_map()?;
+        let block_pool = runner.get_block_pool()?;
+        let if_pool = runner.get_if_pool()?;
+        let switch_pool = runner.get_switch_pool()?;
+        let while_pool = runner.get_while_pool()?;
+        let for_pool = runner.get_for_pool()?;
+
+        Ok(Self {
+            func_map,
+            block_pool,
+            if_pool,
+            switch_pool,
+            while_pool,
+            for_pool,
+        })
+    }
 
     // other methods
 
@@ -42,6 +58,7 @@ impl SrcForestBuilder {
         switch_map_op: Option<&SwitchMap>,
         while_set_op: Option<&WhileSet>,
         for_set_op: Option<&ForSet>,
+        // parent_ptr: SharedStmtNodePtr,
     ) -> Result<SharedStmtNodePtr> {
         match cur_entry.stmt_type {
             StmtType::Block => {
@@ -61,7 +78,13 @@ impl SrcForestBuilder {
                         )?;
                         child_ptr_vec.push(child_ptr);
                     }
-                    Ok(StmtNode::create_block_ptr(block_stmt, child_ptr_vec))
+                    let cur_ptr = StmtNode::create_block_ptr(block_stmt, child_ptr_vec.clone());
+                    // parent ptr setting
+                    for (idx, child_ptr) in child_ptr_vec.into_iter().enumerate() {
+                        child_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        child_ptr.borrow_mut().parent_idx = Some(idx);
+                    }
+                    Ok(cur_ptr)
                 } else {
                     bail!(
                         "Block statement at {:?} not found in block map",
@@ -80,7 +103,7 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                         )?;
-                        let else_ptr = match &if_stmt.else_entry {
+                        let else_ptr_op = match &if_stmt.else_entry {
                             Some(else_entry) => Some(Self::create_node_recur(
                                 else_entry,
                                 block_map,
@@ -91,7 +114,14 @@ impl SrcForestBuilder {
                             )?),
                             None => None,
                         };
-                        Ok(StmtNode::create_if_ptr(if_stmt, then_ptr, else_ptr))
+                        let cur_ptr =
+                            StmtNode::create_if_ptr(if_stmt, then_ptr.clone(), else_ptr_op.clone());
+                        // parent ptr setting
+                        then_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        if let Some(else_ptr) = else_ptr_op {
+                            else_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        }
+                        Ok(cur_ptr)
                     } else {
                         bail!("If statement at {:?} not found in if set", cur_entry.loc);
                     }
@@ -108,6 +138,7 @@ impl SrcForestBuilder {
                     {
                         let mut case_ptr_map = HashMap::new();
                         for (case_loc, case_stmt_set) in case_map {
+                            // case ptr vec construction
                             let case_ptr_vec = case_ptr_map
                                 .entry(case_loc.clone())
                                 .or_insert_with(Vec::new);
@@ -126,7 +157,18 @@ impl SrcForestBuilder {
                                 case_ptr_vec.push(case_ptr);
                             }
                         }
-                        Ok(StmtNode::create_switch_ptr(switch_stmt, case_ptr_map))
+
+                        let cur_ptr =
+                            StmtNode::create_switch_ptr(switch_stmt, case_ptr_map.clone());
+                        // parent ptr setting
+                        for (case_loc, case_ptr_vec) in case_ptr_map.into_iter() {
+                            for (idx, case_ptr) in case_ptr_vec.into_iter().enumerate() {
+                                case_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                                case_ptr.borrow_mut().parent_idx = Some(idx);
+                                case_ptr.borrow_mut().parent_case_loc = Some(case_loc.clone());
+                            }
+                        }
+                        Ok(cur_ptr)
                     } else {
                         bail!(
                             "Switch statement at {:?} not found in switch map",
@@ -151,7 +193,10 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                         )?;
-                        Ok(StmtNode::create_while_ptr(while_stmt, body_ptr))
+                        let cur_ptr = StmtNode::create_while_ptr(while_stmt, body_ptr.clone());
+                        // parent ptr setting
+                        body_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        Ok(cur_ptr)
                     } else {
                         bail!(
                             "While statement at {:?} not found in while set",
@@ -176,7 +221,10 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                         )?;
-                        Ok(StmtNode::create_while_ptr(while_stmt, body_ptr))
+                        let cur_ptr = StmtNode::create_while_ptr(while_stmt, body_ptr.clone());
+                        // parent ptr setting
+                        body_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        Ok(cur_ptr)
                     } else {
                         bail!(
                             "While statement at {:?} not found in while set",
@@ -201,7 +249,10 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                         )?;
-                        Ok(StmtNode::create_for_ptr(for_stmt, body_ptr))
+                        let cur_ptr = StmtNode::create_for_ptr(for_stmt, body_ptr.clone());
+                        // parent ptr setting
+                        body_ptr.borrow_mut().parent_ptr = Some(Rc::downgrade(&cur_ptr));
+                        Ok(cur_ptr)
                     } else {
                         bail!("For statement at {:?} not found in for set", cur_entry.loc);
                     }
@@ -214,7 +265,6 @@ impl SrcForestBuilder {
             }
             _ => {
                 // For Plain Stmt.
-
                 Ok(StmtNode::create_plain_ptr(cur_entry))
             }
         }

@@ -6,6 +6,7 @@ use std::process::Command;
 use tempfile::NamedTempFile;
 
 use crate::analysis::constraint::intra::func_src_tree::stmts::{LocParseError, QLLoc, StmtType};
+use crate::config::get_library_name;
 use crate::deopt::utils::buffer_read_to_bytes;
 use crate::deopt::Deopt;
 
@@ -25,12 +26,14 @@ impl Deopt {
     }
 }
 
-struct CodeQLRunner {
+pub struct CodeQLRunner {
     deopt: Deopt,
 }
 
 impl CodeQLRunner {
-    pub fn new(deopt: Deopt) -> Self {
+    pub fn new() -> Self {
+        let lib_name = get_library_name();
+        let deopt = Deopt::new(&lib_name).unwrap();
         Self { deopt }
     }
 
@@ -161,8 +164,7 @@ mod tests {
     #[test]
     fn test_run_query() -> Result<()> {
         setup_test_run_entry("libaom", true)?;
-        let deopt = Deopt::new("libaom")?;
-        let runner = CodeQLRunner::new(deopt);
+        let runner = CodeQLRunner::new();
 
         let bytes = runner.run_query("block_stmt.ql")?;
         log::debug!("Query output:\n{}", String::from_utf8_lossy(&bytes));

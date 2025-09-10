@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs::read_dir, path::Path};
 
 use color_eyre::eyre::Result;
 
-use crate::analysis::constraint::inter::exec_tree::thread_tree::{ThreadTree, THCPMAPPING};
+use crate::analysis::constraint::inter::exec_tree::thread_tree::{ThreadExecTree, THCPMAPPING};
 
 pub mod action;
 pub mod analyze;
@@ -10,7 +10,7 @@ pub mod thread_tree;
 
 pub struct ExecForest {
     thcp_mapping: THCPMAPPING,
-    thread_tree_list: Vec<ThreadTree>,
+    thread_tree_list: Vec<ThreadExecTree>,
     main_idx: usize,
 }
 
@@ -44,7 +44,7 @@ impl ExecForest {
                 idx = tree_list.len();
             }
 
-            let (tree, sub_mapping) = ThreadTree::from_guard_file(&guard_fpath)?;
+            let (tree, sub_mapping) = ThreadExecTree::from_guard_file(&guard_fpath)?;
             tree_list.push(tree);
             thcp_mapping.extend(sub_mapping);
         }
@@ -55,7 +55,7 @@ impl ExecForest {
         })
     }
 
-    pub fn iter_trees(&self) -> impl Iterator<Item = &ThreadTree> {
+    pub fn iter_trees(&self) -> impl Iterator<Item = &ThreadExecTree> {
         self.thread_tree_list.iter()
     }
 

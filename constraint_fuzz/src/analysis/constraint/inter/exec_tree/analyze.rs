@@ -8,7 +8,7 @@ use crate::{
     analysis::constraint::inter::{
         exec_tree::action::ExecAction,
         exec_tree::thread_tree::{
-            incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr, ThreadTree,
+            incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr, ThreadExecTree,
         },
         loc::SrcLoc,
     },
@@ -146,7 +146,7 @@ impl FuncNodeLenList {
     }
 }
 
-impl ThreadTree {
+impl ThreadExecTree {
     // const INTRA_ACTION_LIMIT: usize = 50;
     // const LOOP_ACTION_LIMIT: usize = 30;
 

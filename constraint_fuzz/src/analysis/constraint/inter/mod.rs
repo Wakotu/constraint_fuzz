@@ -9,7 +9,7 @@ use std::{
 
 use crate::analysis::constraint::exec_rec::ExecRec;
 use crate::{
-    analysis::constraint::inter::{exec_tree::thread_tree::ThreadTree, loc::SrcRegion},
+    analysis::constraint::inter::{exec_tree::thread_tree::ThreadExecTree, loc::SrcRegion},
     config::is_debug_mode,
     deopt::utils::{
         buffer_read_to_bytes, create_dir_if_nonexist, get_basename_str_from_path, get_parent_dir,
