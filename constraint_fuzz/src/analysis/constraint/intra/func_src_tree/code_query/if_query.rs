@@ -9,7 +9,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
-    code_query::{CodeQLRunner, FileFuncTable},
+    code_query::{CodeQLRunner, FuncTable},
     stmts::{IfStmt, LocParseError, QLLoc, StmtType},
 };
 
@@ -37,7 +37,7 @@ pub struct ElseRecord {
 }
 
 pub type IfSet = HashSet<IfStmt>;
-pub type IfPool = FileFuncTable<IfSet>;
+pub type IfPool = FuncTable<IfSet>;
 
 pub type ElseRecMap = HashMap<String, ElseRecord>; // key is IfRecord.loc
 
@@ -54,7 +54,7 @@ impl CodeQLRunner {
         let mut if_pool: IfPool = IfPool::new();
 
         for if_record in if_records.into_iter() {
-            let if_set = if_pool.get_value_mut(&if_record.file_path, &if_record.function);
+            let if_set = if_pool.get_value_mut(&if_record.function);
             let if_stmt = match IfStmt::from_if_else_record(if_record, &else_map) {
                 Ok(s) => s,
                 Err(e) => match e {

@@ -1,6 +1,12 @@
 use color_eyre::eyre::Result;
 use my_macros::EquivByLoc;
-use std::{borrow::Borrow, collections::HashMap, path::PathBuf};
+use std::{
+    borrow::Borrow,
+    collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
+    path::PathBuf,
+};
 
 use eyre::bail;
 
@@ -22,6 +28,44 @@ pub struct QLLoc {
     end_column: usize,
 }
 
+impl QLLoc {
+    pub fn get_content(&self) -> Result<String> {
+        let file = File::open(&self.file_path)?;
+        let reader = BufReader::new(file);
+
+        let mut content = String::new();
+        for (idx, line) in reader.lines().enumerate() {
+            let line_num = idx + 1;
+            let line = line?;
+            if line_num < self.start_line {
+                continue;
+            }
+            if line_num > self.end_line {
+                break;
+            }
+            if line_num == self.start_line && line_num == self.end_line {
+                // start line and end line are the same
+                let snippet = &line[self.start_column - 1..self.end_column - 1];
+                content.push_str(snippet);
+            } else if line_num == self.start_line {
+                // start line only
+                let snippet = &line[self.start_column - 1..];
+                content.push_str(snippet);
+                content.push('\n');
+            } else if line_num == self.end_line {
+                // end line only
+                let snippet = &line[..self.end_column - 1];
+                content.push_str(snippet);
+            } else {
+                // inner line
+                content.push_str(&line);
+                content.push('\n');
+            }
+        }
+        Ok(content)
+    }
+}
+
 pub enum LocParseError {
     FormatErr(String),
     ValueErr(String),
@@ -40,6 +84,30 @@ impl Ord for QLLoc {
 }
 
 impl QLLoc {
+    pub fn end_before(&self, other: &QLLoc) -> bool {
+        self.end_line < other.start_line
+            || (self.end_line == other.start_line && self.end_column < other.start_column)
+    }
+
+    pub fn start_after(&self, other: &QLLoc) -> bool {
+        self.start_line > other.end_line
+            || (self.start_line == other.end_line && self.start_column > other.end_column)
+    }
+
+    pub fn start_before(&self, other: &QLLoc) -> bool {
+        self.start_line < other.start_line
+            || (self.start_line == other.start_line && self.start_column < other.start_column)
+    }
+
+    pub fn end_after(&self, other: &QLLoc) -> bool {
+        self.end_line > other.end_line
+            || (self.end_line == other.end_line && self.end_column > other.end_column)
+    }
+
+    pub fn contains(&self, other: &QLLoc) -> bool {
+        self.start_before(other) && self.end_after(other)
+    }
+
     pub fn compare(&self, other: &QLLoc) -> std::cmp::Ordering {
         match self.file_path.cmp(&other.file_path) {
             std::cmp::Ordering::Equal => match self.start_line.cmp(&other.start_line) {

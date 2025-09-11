@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constraint::intra::func_src_tree::{
-    code_query::{CodeQLRunner, FileFuncTable},
+    code_query::{CodeQLRunner, FuncTable},
     stmts::{ForStmt, LocParseError},
 };
 
@@ -46,7 +46,7 @@ pub struct ForUpdateRecord {
     file_path: String,
 }
 pub type ForSet = HashSet<ForStmt>;
-pub type ForPool = FileFuncTable<ForSet>;
+pub type ForPool = FuncTable<ForSet>;
 
 pub type ForInitMap = HashMap<String, String>; // Map from for loc to init loc
 pub type ForCondMap = HashMap<String, String>; // Map from for loc to cond loc
@@ -74,10 +74,10 @@ impl CodeQLRunner {
             update_map.insert(rec.loc, rec.update_loc);
         }
 
-        let mut for_pool: ForPool = FileFuncTable::new();
+        let mut for_pool: ForPool = FuncTable::new();
 
         for rec in for_recs.into_iter() {
-            let for_set = for_pool.get_value_mut(&rec.file_path, &rec.func_name);
+            let for_set = for_pool.get_value_mut(&rec.func_name);
             let for_stmt =
                 match ForStmt::from_for_record_and_maps(&rec, &init_map, &cond_map, &update_map) {
                     Ok(s) => s,

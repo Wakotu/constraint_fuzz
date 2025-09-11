@@ -28,8 +28,8 @@ pub trait FuncIter {
     fn iter_sub_funcs(&self) -> SubFuncIter;
 }
 
-pub type SharedFuncNodePtr = Rc<RefCell<FuncNode>>;
-pub type WeakFuncNodePtr = Weak<RefCell<FuncNode>>;
+pub type SharedFuncNodePtr = Rc<RefCell<ExecFuncNode>>;
+pub type WeakFuncNodePtr = Weak<RefCell<ExecFuncNode>>;
 
 const NODE_DELIM: &str = ", ";
 
@@ -104,13 +104,13 @@ impl Iterator for SubFuncIter {
     }
 }
 
-pub struct FuncNode {
+pub struct ExecFuncNode {
     // node_type field which contains func name
     node_type: FuncEntryType,
-    data: Vec<ExecAction>,
+    pub data: Vec<ExecAction>,
 }
 
-impl fmt::Debug for FuncNode {
+impl fmt::Debug for ExecFuncNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.node_type {
             FuncEntryType::Init => write!(f, "Init Node("),
@@ -138,7 +138,7 @@ impl fmt::Debug for FuncNode {
     }
 }
 
-impl DotId for FuncNode {
+impl DotId for ExecFuncNode {
     fn get_dot_id(&self) -> String {
         let cnt = incre_dot_counter();
         match self.node_type {
@@ -155,7 +155,7 @@ impl DotId for FuncNode {
     }
 }
 
-impl FuncNode {
+impl ExecFuncNode {
     pub fn init_node() -> Self {
         Self {
             node_type: FuncEntryType::Init,
@@ -320,7 +320,7 @@ impl ThreadExecTree {
     pub fn new<P: AsRef<Path>>(fpath: P) -> Result<Self> {
         let tid = Self::parse_tid(fpath)?;
 
-        let root_ptr = FuncNode::init_node().get_node_ptr();
+        let root_ptr = ExecFuncNode::init_node().get_node_ptr();
 
         Ok(Self {
             tid,
@@ -455,7 +455,7 @@ impl ThreadExecTree {
             cur_func.get_len()
         };
         // create node and act_type
-        let child_ptr = FuncNode::regular_node(
+        let child_ptr = ExecFuncNode::regular_node(
             func_name.to_owned(),
             Rc::downgrade(&self.cur_node_ptr),
             cur_act_len,

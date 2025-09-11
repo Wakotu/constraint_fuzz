@@ -10,6 +10,8 @@ pub mod exec_rec;
 pub mod inter;
 pub mod intra;
 
+pub mod stmt_collect;
+
 /**
  * This module is used to get dataflow information of a specified constraint.
  */

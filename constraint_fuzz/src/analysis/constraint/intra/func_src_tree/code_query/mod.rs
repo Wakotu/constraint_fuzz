@@ -18,6 +18,8 @@ pub mod while_query;
 
 pub mod file_func_query;
 
+pub mod func_invoc_query;
+
 impl Deopt {
     pub fn get_codeql_db_dir(&self) -> Result<PathBuf> {
         let lib_build_dir = self.get_library_build_dir()?;
@@ -117,39 +119,35 @@ impl CodeQLRunner {
     }
 }
 
-pub struct FileFuncTable<V> {
-    data: HashMap<PathBuf, HashMap<String, V>>,
+pub struct FuncTable<V> {
+    data: HashMap<String, V>,
 }
 
-impl<V> FileFuncTable<V> {
+impl<V> FuncTable<V> {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, file_path: &Path, func_name: &str, value: V) {
-        self.data
-            .entry(file_path.to_owned())
-            .or_insert_with(HashMap::new)
-            .insert(func_name.to_owned(), value);
+    pub fn insert(&mut self, func_name: &str, value: V) {
+        self.data.insert(func_name.to_owned(), value);
+    }
+
+    pub fn get_value(&self, func_name: &str) -> Option<&V> {
+        self.data.get(func_name)
+    }
+
+    pub fn get_all_func_names(&self) -> Vec<String> {
+        self.data.keys().cloned().collect()
     }
 }
 
-impl<V: Default> FileFuncTable<V> {
-    pub fn get_value_mut(&mut self, file_path: &str, func_name: &str) -> &mut V {
-        let file_path = PathBuf::from(file_path);
+impl<V: Default> FuncTable<V> {
+    pub fn get_value_mut(&mut self, func_name: &str) -> &mut V {
         self.data
-            .entry(file_path)
-            .or_insert_with(HashMap::new)
             .entry(func_name.to_owned())
             .or_insert_with(V::default)
-    }
-
-    pub fn get_value<P: AsRef<Path>>(&self, file_path: P, func_name: &str) -> Option<&V> {
-        self.data
-            .get(file_path.as_ref())
-            .and_then(|func_map| func_map.get(func_name))
     }
 }
 

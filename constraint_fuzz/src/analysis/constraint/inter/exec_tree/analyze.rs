@@ -8,7 +8,7 @@ use crate::{
     analysis::constraint::inter::{
         exec_tree::action::ExecAction,
         exec_tree::thread_tree::{
-            incre_dot_counter, DotId, FuncIter, FuncNode, SharedFuncNodePtr, ThreadExecTree,
+            incre_dot_counter, DotId, ExecFuncNode, FuncIter, SharedFuncNodePtr, ThreadExecTree,
         },
         loc::SrcLoc,
     },
@@ -150,7 +150,7 @@ impl ThreadExecTree {
     // const INTRA_ACTION_LIMIT: usize = 50;
     // const LOOP_ACTION_LIMIT: usize = 30;
 
-    fn act_ignore_at_visualization(cur_func: &FuncNode, idx: usize) -> Result<bool> {
+    fn act_ignore_at_visualization(cur_func: &ExecFuncNode, idx: usize) -> Result<bool> {
         // ignore action if it is a loop or intra-function action
         let act = cur_func.get_act_at(idx).ok_or_else(|| {
             eyre::eyre!(

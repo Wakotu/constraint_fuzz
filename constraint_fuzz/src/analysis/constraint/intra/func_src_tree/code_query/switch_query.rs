@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constraint::intra::func_src_tree::{
-    code_query::{CodeQLRunner, FileFuncTable},
+    code_query::{CodeQLRunner, FuncTable},
     stmts::{ChildEntry, LocParseError, QLLoc, SwitchStmt},
 };
 
@@ -12,7 +12,7 @@ const SWITCH_QUERY_NAME: &str = "switch_stmt.ql";
 
 pub type CaseMap = HashMap<QLLoc, HashSet<ChildEntry>>;
 pub type SwitchMap = HashMap<SwitchStmt, CaseMap>;
-pub type SwitchPool = FileFuncTable<SwitchMap>;
+pub type SwitchPool = FuncTable<SwitchMap>;
 
 #[derive(Deserialize, Debug)]
 pub struct SwitchRecord {
@@ -41,9 +41,9 @@ impl CodeQLRunner {
     pub fn get_switch_pool(&self) -> Result<SwitchPool> {
         let records: Vec<SwitchRecord> = self.run_query_and_parse(SWITCH_QUERY_NAME)?;
 
-        let mut switch_pool: SwitchPool = FileFuncTable::new();
+        let mut switch_pool: SwitchPool = FuncTable::new();
         for record in records.into_iter() {
-            let switch_map = switch_pool.get_value_mut(&record.file_path, &record.func_name);
+            let switch_map = switch_pool.get_value_mut(&record.func_name);
             let (switch_stmt, case_expr_loc, case_stmt_entry) = match record.to_entry() {
                 Ok(e) => e,
                 Err(e) => match e {

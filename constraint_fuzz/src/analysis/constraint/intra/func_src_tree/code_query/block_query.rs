@@ -8,7 +8,7 @@ use eyre::bail;
 use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
-    code_query::{CodeQLRunner, FileFuncTable},
+    code_query::{CodeQLRunner, FuncTable},
     stmts::{BlockStmt, ChildEntry, LocParseError, QLLoc},
 };
 
@@ -80,7 +80,7 @@ impl BlockMap {
 }
 
 pub type BlockEntry = (BlockStmt, ChildEntry);
-pub type BlockPool = FileFuncTable<BlockMap>;
+pub type BlockPool = FuncTable<BlockMap>;
 
 impl CodeQLRunner {
     fn get_records(&self) -> Result<Vec<BlockRecord>> {
@@ -91,10 +91,10 @@ impl CodeQLRunner {
     pub fn get_block_pool(&self) -> Result<BlockPool> {
         let records = self.get_records()?;
 
-        let mut block_pool: FileFuncTable<BlockMap> = FileFuncTable::new();
+        let mut block_pool: FuncTable<BlockMap> = FuncTable::new();
         // let mut block_map: BlockMap = BlockMap::new();
         for record in records {
-            let block_map = block_pool.get_value_mut(&record.file_path, &record.func_name);
+            let block_map = block_pool.get_value_mut(&record.func_name);
             let entry_res = record.to_entry();
             match entry_res {
                 Ok((block, child)) => {
