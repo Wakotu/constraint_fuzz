@@ -11,6 +11,7 @@ use crate::deopt::utils::buffer_read_to_bytes;
 use crate::deopt::Deopt;
 
 pub mod block_query;
+pub mod custom_class_query;
 pub mod for_query;
 pub mod if_query;
 pub mod switch_query;
