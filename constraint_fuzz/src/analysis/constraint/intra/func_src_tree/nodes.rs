@@ -1,6 +1,8 @@
 use core::panic;
 use std::{
     cell::RefCell,
+    cmp::Ordering,
+    collections::HashSet,
     process::Child,
     rc::{Rc, Weak},
 };
@@ -10,10 +12,17 @@ use eyre::bail;
 use my_macros::EquivByLoc;
 
 use crate::analysis::constraint::{
-    inter::exec_tree::thread_tree::ExecFuncNode,
+    inter::{
+        exec_tree::{
+            action::{ExecAction, FuncAction, JumpAction, JumpActionType, LoopAction},
+            thread_tree::ExecFuncNode,
+        },
+        loc::SrcLocEnum,
+    },
     intra::func_src_tree::{
         code_query::{
             func_invoc_query::{FuncInvoc, FuncInvocMap},
+            scope_var_query::{FuncScopeMap, SrcVar, StmtScopeMap},
             switch_query::CaseMap,
         },
         nodes::cf_mod::{CFStruct, CasePtrMap},
@@ -36,9 +45,43 @@ pub struct StmtNode {
     pub parent_idx_op: Option<usize>,
     /// case label location if this node is under a switch-case
     pub parent_case_loc_op: Option<QLLoc>,
+    /// valid variables in scope at this statement
+    pub valid_var_vec: Vec<SrcVar>,
 }
 
 impl StmtNode {
+    pub fn get_loc(&self) -> &QLLoc {
+        match &self.variants {
+            StmtNodeVariants::Block(block_node) => &block_node.loc,
+            StmtNodeVariants::Plain(plain_node) => &plain_node.loc,
+            StmtNodeVariants::CFStruct(cf_struct) => match cf_struct {
+                CFStruct::If(if_node) => &if_node.loc,
+                CFStruct::Switch(switch_node) => &switch_node.loc,
+                CFStruct::While(while_node) => &while_node.loc,
+                CFStruct::For(for_node) => &for_node.loc,
+            },
+        }
+    }
+
+    pub fn get_parent_ptr(&self) -> Option<SharedStmtNodePtr> {
+        match &self.parent_ptr_op {
+            None => None,
+            Some(wp) => Some(
+                wp.upgrade()
+                    .expect("Stmt Node Pointer: Parent pointer has been dropped"),
+            ),
+        }
+    }
+
+    pub fn is_loop_node(&self) -> bool {
+        match &self.variants {
+            StmtNodeVariants::CFStruct(cf_struct) => {
+                matches!(cf_struct, CFStruct::While(_)) || matches!(cf_struct, CFStruct::For(_))
+            }
+            _ => false,
+        }
+    }
+
     /**
      * Default Pointer Creation
      */
@@ -46,24 +89,35 @@ impl StmtNode {
     pub fn create_plain_ptr(
         entry: &ChildEntry,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: WeakStmtNodePtr
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&entry.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::Plain(SrcExpr::from_loc_and_invocs(
+            variants: StmtNodeVariants::Plain(PlainStmtNode::from_loc_and_invocs(
                 &entry.loc,
                 func_invoc_map,
             )),
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 
     pub fn create_block_ptr(
         block_stmt: &BlockStmt,
         stmts: Vec<SharedStmtNodePtr>,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: Option<WeakStmtNodePtr>,
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&block_stmt.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
             variants: StmtNodeVariants::Block(BlockStmtNode {
                 loc: block_stmt.loc.clone(),
@@ -73,6 +127,7 @@ impl StmtNode {
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 
@@ -81,8 +136,13 @@ impl StmtNode {
         then_ptr: SharedStmtNodePtr,
         else_ptr: Option<SharedStmtNodePtr>,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: WeakStmtNodePtr,
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&if_stmt.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
             variants: StmtNodeVariants::CFStruct(CFStruct::If(cf_mod::IfNode {
                 loc: if_stmt.loc.clone(),
@@ -93,6 +153,7 @@ impl StmtNode {
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 
@@ -100,7 +161,12 @@ impl StmtNode {
         switch_stmt: &SwitchStmt,
         case_ptr_map: CasePtrMap,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&switch_stmt.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
             variants: StmtNodeVariants::CFStruct(CFStruct::Switch(cf_mod::SwitchNode {
                 loc: switch_stmt.loc.clone(),
@@ -110,6 +176,7 @@ impl StmtNode {
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 
@@ -117,8 +184,13 @@ impl StmtNode {
         while_stmt: &WhileStmt,
         body_ptr: SharedStmtNodePtr,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: WeakStmtNodePtr,
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&while_stmt.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
             variants: StmtNodeVariants::CFStruct(CFStruct::While(cf_mod::WhileNode {
                 loc: while_stmt.loc.clone(),
@@ -129,6 +201,7 @@ impl StmtNode {
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 
@@ -136,8 +209,13 @@ impl StmtNode {
         for_stmt: &ForStmt,
         body_ptr: SharedStmtNodePtr,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: WeakStmtNodePtr,
     ) -> SharedStmtNodePtr {
+        let valid_var_vec = match stmt_scope_map.get(&for_stmt.loc) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
         Rc::new(RefCell::new(StmtNode {
             variants: StmtNodeVariants::CFStruct(CFStruct::For(cf_mod::ForNode {
                 loc: for_stmt.loc.clone(),
@@ -158,6 +236,7 @@ impl StmtNode {
             parent_ptr_op: None,
             parent_idx_op: None,
             parent_case_loc_op: None,
+            valid_var_vec,
         }))
     }
 }
@@ -165,7 +244,56 @@ impl StmtNode {
 pub type SharedStmtNodePtr = Rc<RefCell<StmtNode>>;
 pub type WeakStmtNodePtr = Weak<RefCell<StmtNode>>;
 
-pub type PlainStmtNode = SrcExpr;
+// pub type PlainStmtNode = SrcExpr;
+
+#[derive(EquivByLoc, Clone)]
+pub struct PlainStmtNode {
+    loc: QLLoc,
+    func_invoc_vec: Vec<FuncInvoc>,
+}
+
+impl PlainStmtNode {
+    pub fn from_loc_and_invocs(loc: &QLLoc, func_invoc_map: &FuncInvocMap) -> Self {
+        let invoc_vec = SrcExpr::get_invoc_by_loc(loc, func_invoc_map);
+
+        Self {
+            loc: loc.clone(),
+            func_invoc_vec: invoc_vec,
+        }
+    }
+
+    pub fn compare_src_loc(&self, src_loc: &SrcLocEnum) -> Option<Ordering> {
+        match self.loc.compare_src_loc(src_loc) {
+            Some(ord) => Some(ord),
+            None => {
+                log::warn!(
+                    "Function Unwind Action location is not comparable with statement location"
+                );
+                None
+            }
+        }
+    }
+
+    fn match_act_loc_impl(&self, act: &ExecAction) -> bool {
+        let act_loc = match act.get_match_loc() {
+            None => return false,
+            Some(loc) => loc,
+        };
+        let loc_ord = match self.compare_src_loc(act_loc) {
+            None => return false,
+            Some(o) => o,
+        };
+        loc_ord == Ordering::Equal
+    }
+
+    pub fn match_act_loc(&self, act: &ExecAction) -> Result<bool> {
+        let act_match = self.match_act_loc_impl(act);
+        if act_match && !act.plain_stmt_suitable() {
+            bail!("Statement-Action location match, but action type is not suitable for plain statement");
+        }
+        Ok(act_match)
+    }
+}
 
 #[derive(EquivByLoc)]
 pub struct BlockStmtNode {
@@ -243,11 +371,22 @@ pub mod cf_mod {
 
 pub struct FuncSrcTree {
     root: SharedStmtNodePtr,
+    valid_var_vec: Vec<SrcVar>,
 }
 
 impl FuncSrcTree {
-    pub fn new(root: SharedStmtNodePtr) -> Self {
-        Self { root }
+    pub fn get_formal_param_vec(&self) -> &Vec<SrcVar> {
+        &self.valid_var_vec
+    }
+    pub fn new(root: SharedStmtNodePtr, name: &str, func_scope_map: &FuncScopeMap) -> Self {
+        let valid_var_vec = match func_scope_map.get(name) {
+            None => vec![],
+            Some(var_vec) => var_vec.clone(),
+        };
+        Self {
+            root,
+            valid_var_vec,
+        }
     }
 
     pub fn get_root(&self) -> SharedStmtNodePtr {
@@ -258,6 +397,28 @@ impl FuncSrcTree {
         FuncSrcTreeIter {
             cur_ptr_op: Some(Rc::clone(&self.root)),
         }
+    }
+
+    pub fn get_valid_var_vec_for_stmt(&self, stmt_ptr: SharedStmtNodePtr) -> Vec<SrcVar> {
+        let mut name_set: HashSet<String> = HashSet::new();
+        let mut ptr = Some(stmt_ptr);
+        let mut var_vec = vec![];
+        loop {
+            match ptr {
+                None => break,
+                Some(p) => {
+                    let node = p.borrow();
+                    for var in &node.valid_var_vec {
+                        if !name_set.contains(&var.name) {
+                            var_vec.push(var.clone());
+                            name_set.insert(var.name.clone());
+                        }
+                    }
+                    ptr = node.get_parent_ptr();
+                }
+            }
+        }
+        var_vec
     }
 }
 
@@ -271,7 +432,7 @@ impl FuncSrcTreeIter {
         unimplemented!()
     }
 
-    fn get_next_child_ptr(
+    fn get_next_sibling_ptr(
         par_ptr: SharedStmtNodePtr,
         cur_ptr: SharedStmtNodePtr,
     ) -> Option<SharedStmtNodePtr> {
@@ -330,6 +491,7 @@ impl FuncSrcTreeIter {
                 let mut cur_ptr = cur_ptr.clone();
                 let mut par_ptr;
                 loop {
+                    // get next sibling ptr
                     par_ptr = match &cur_ptr.borrow().parent_ptr_op {
                         None => return Ok(None),
                         Some(wp) => match wp.upgrade() {
@@ -337,10 +499,15 @@ impl FuncSrcTreeIter {
                             Some(p) => p,
                         },
                     };
-                    if let Some(ptr) = Self::get_next_child_ptr(par_ptr.clone(), cur_ptr.clone()) {
+                    if let Some(ptr) = Self::get_next_sibling_ptr(par_ptr.clone(), cur_ptr.clone())
+                    {
                         return Ok(Some(ptr));
                     }
 
+                    // No next sibling: stop at loop node or go up
+                    if par_ptr.borrow().is_loop_node() {
+                        return Ok(Some(par_ptr));
+                    }
                     cur_ptr = par_ptr;
                 }
             }

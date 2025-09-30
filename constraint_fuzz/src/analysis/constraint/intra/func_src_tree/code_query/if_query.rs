@@ -62,6 +62,10 @@ impl CodeQLRunner {
                         log::warn!("Warning: Skipping IfStmt due to value error: {}", msg);
                         continue;
                     }
+                    LocParseError::ZeroErr => {
+                        log::warn!("Warning: Skipping IfStmt due to zero loc");
+                        continue;
+                    }
                     LocParseError::FormatErr(msg) => {
                         bail!("Error: Failed to parse IfStmt due to format error: {}", msg)
                     }

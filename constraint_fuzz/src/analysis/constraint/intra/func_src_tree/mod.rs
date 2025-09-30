@@ -1,5 +1,5 @@
 use crate::analysis::constraint::intra::func_src_tree::{
-    builder::{FuncSrcForest, SrcForestBuilder},
+    builder::{FuncSrcForest, ProjectInfo, SrcForestBuilder},
     code_query::CodeQLRunner,
 };
 
@@ -13,6 +13,7 @@ use color_eyre::eyre::Result;
 
 pub fn build_func_src_forest() -> Result<FuncSrcForest> {
     let runner = CodeQLRunner::new();
-    let builder = SrcForestBuilder::from_codeql_runner(&runner)?;
+    let proj_info = ProjectInfo::from_codeql_runner(&runner)?;
+    let builder = SrcForestBuilder::new(&proj_info);
     builder.build_forest()
 }

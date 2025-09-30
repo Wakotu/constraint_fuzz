@@ -112,6 +112,12 @@ impl CodeQLRunner {
                                 record
                             );
                         }
+                        LocParseError::ZeroErr => {
+                            log::warn!(
+                                "Warning: Skipping record due to zero loc value. Record: {:?}",
+                                record
+                            );
+                        }
                     }
                 }
             }

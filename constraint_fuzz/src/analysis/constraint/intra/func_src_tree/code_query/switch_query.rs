@@ -54,6 +54,10 @@ impl CodeQLRunner {
                     LocParseError::FormatErr(msg) => {
                         bail!("Failed to parse switch record: {:?}, err: {}", record, msg);
                     }
+                    LocParseError::ZeroErr => {
+                        log::warn!("Failed to parse switch record (zero loc): {:?}", record);
+                        continue;
+                    }
                 },
             };
 

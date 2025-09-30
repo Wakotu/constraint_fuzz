@@ -1,7 +1,9 @@
 use color_eyre::eyre::Result;
 use my_macros::EquivByLoc;
+use serde::Serialize;
 use std::{
     borrow::Borrow,
+    cmp::Ordering,
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
@@ -11,10 +13,13 @@ use std::{
 use eyre::bail;
 
 use crate::{
-    analysis::constraint::intra::func_src_tree::code_query::{
-        for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
-        if_query::{ElseRecMap, ElseRecord, IfRecord},
-        while_query::WhileRecord,
+    analysis::constraint::{
+        inter::loc::SrcLocEnum,
+        intra::func_src_tree::code_query::{
+            for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
+            if_query::{ElseRecMap, IfRecord},
+            while_query::WhileRecord,
+        },
     },
     config,
     deopt::Deopt,
@@ -29,9 +34,27 @@ pub struct QLLoc {
 }
 
 impl QLLoc {
-    pub fn get_content(&self) -> Result<String> {
+    /**
+     * File IO related
+     *  */
+
+    fn loc_line_match(inner_loc: &Option<&SrcLocEnum>, line_num: usize) -> bool {
+        match inner_loc {
+            None => false,
+            Some(src_loc) => match src_loc {
+                SrcLocEnum::NullLoc => false,
+                SrcLocEnum::Valid(valid_loc) => valid_loc.line == line_num,
+            },
+        }
+    }
+
+    /// transform inner loc to relative loc in the newly returned string
+    /// TODO: to be tested, mainly focused on relative index construction
+    fn get_content_impl(&self, inner_loc: Option<&SrcLocEnum>) -> Result<(String, Option<usize>)> {
         let file = File::open(&self.file_path)?;
         let reader = BufReader::new(file);
+
+        let mut idx_op: Option<usize> = None;
 
         let mut content = String::new();
         for (idx, line) in reader.lines().enumerate() {
@@ -43,9 +66,21 @@ impl QLLoc {
             if line_num > self.end_line {
                 break;
             }
+
+            if Self::loc_line_match(&inner_loc, line_num) {
+                let pre_off = content.len();
+                let cur_off = if line_num == self.start_line {
+                    inner_loc.unwrap().get_col().unwrap() - self.start_column
+                } else {
+                    inner_loc.unwrap().get_col().unwrap() - 1
+                };
+                idx_op = Some(pre_off + cur_off);
+            }
+
             if line_num == self.start_line && line_num == self.end_line {
                 // start line and end line are the same
                 let snippet = &line[self.start_column - 1..self.end_column - 1];
+
                 content.push_str(snippet);
             } else if line_num == self.start_line {
                 // start line only
@@ -62,13 +97,70 @@ impl QLLoc {
                 content.push('\n');
             }
         }
+        Ok((content, idx_op))
+    }
+
+    pub fn get_content_with_inner(
+        &self,
+        inner_loc: Option<&SrcLocEnum>,
+    ) -> Result<(String, Option<usize>)> {
+        self.get_content_impl(inner_loc)
+    }
+
+    pub fn get_content(&self) -> Result<String> {
+        let (content, _) = self.get_content_impl(None)?;
         Ok(content)
+    }
+}
+
+impl QLLoc {
+    pub fn compare_line_and_col(&self, line: usize, col: usize) -> Ordering {
+        if self.start_line > line || (self.start_line == line && self.start_column > col) {
+            return Ordering::Greater;
+        }
+        if self.end_line < line || (self.end_line == line && self.end_column < col) {
+            return Ordering::Less;
+        }
+
+        Ordering::Equal
+    }
+
+    /// compare with src loc that are in the same file_path
+    pub fn compare_src_loc(&self, src_loc: &SrcLocEnum) -> Option<Ordering> {
+        match src_loc {
+            SrcLocEnum::NullLoc => None,
+            SrcLocEnum::Valid(valid_loc) => match self.file_path.cmp(&valid_loc.fpath) {
+                Ordering::Equal => {
+                    if self.start_line > valid_loc.line
+                        || (self.start_line == valid_loc.line && self.start_column > valid_loc.col)
+                    {
+                        return Some(Ordering::Greater);
+                    }
+                    if self.end_line < valid_loc.line
+                        || (self.end_line == valid_loc.line && self.end_column < valid_loc.col)
+                    {
+                        return Some(Ordering::Less);
+                    }
+
+                    Some(Ordering::Equal)
+                }
+                ord => {
+                    log::warn!(
+                        "Comparing QL ans Src locations from different files: {} and {}",
+                        self.file_path.display(),
+                        valid_loc.fpath.display()
+                    );
+                    Some(ord)
+                }
+            },
+        }
     }
 }
 
 pub enum LocParseError {
     FormatErr(String),
     ValueErr(String),
+    ZeroErr,
 }
 
 impl PartialOrd for QLLoc {
@@ -144,6 +236,9 @@ impl QLLoc {
     pub fn from_str(loc_str: &str) -> std::result::Result<Self, LocParseError> {
         const LOC_PREFIX: &str = "file://";
         assert!(loc_str.starts_with(LOC_PREFIX));
+        if loc_str == "file://:0:0:0:0" {
+            return Err(LocParseError::ZeroErr);
+        }
         let loc_str = &loc_str[LOC_PREFIX.len()..];
         let parts: Vec<&str> = loc_str.split(':').collect();
         if parts.len() != 5 {

@@ -1,5 +1,7 @@
 use color_eyre::eyre::Result;
 use dot_writer::{Attributes, DotWriter, Style};
+use eyre::bail;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -11,14 +13,18 @@ use std::{
     path::Path,
     rc::{Rc, Weak},
 };
+use tokio::join;
 
 use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
-    get_prefix, ExecAction, FuncAction, FuncActionType, JumpAction, LoopAction, RecurAction,
-    ThreadAction,
+    get_prefix, ExecAction, FuncAction, JumpAction, LoopAction, RecurAction, ThreadAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
-use crate::analysis::constraint::inter::loc::SrcLoc;
+use crate::analysis::constraint::inter::loc::SrcLocEnum;
+use crate::analysis::constraint::intra::func_src_tree::builder::ProjectInfo;
+use crate::analysis::constraint::intra::func_src_tree::code_query::file_func_query::{
+    FuncInfo, FuncInfoTable,
+};
 use crate::{
     config::{get_trunc_cnt, is_debug_mode},
     feedback::branches::constraints::UBConstraint,
@@ -197,6 +203,15 @@ impl ExecFuncNode {
         self.data.get(idx)
     }
 
+    pub fn get_act_at_res(&self, idx: usize) -> Result<&ExecAction> {
+        self.get_act_at(idx).ok_or_else(|| {
+            eyre::eyre!(
+                "No more action in function node: {}",
+                self.get_func_name().unwrap_or(&"<unknown>".to_string())
+            )
+        })
+    }
+
     /// Should only be used during construction of ExecTree
     pub fn get_node_ptr(self) -> SharedFuncNodePtr {
         Rc::new(RefCell::new(self))
@@ -253,7 +268,7 @@ impl ExecFuncNode {
 /// Stands for Unconditional Branch Value Hit.
 #[derive(Clone)]
 pub struct UBVHit {
-    loc: SrcLoc,
+    loc: SrcLocEnum,
 }
 
 impl fmt::Debug for UBVHit {
@@ -266,7 +281,7 @@ impl UBVHit {
     pub fn get_src_path(&self) -> Option<&Path> {
         self.loc.get_src_path()
     }
-    pub fn get_loc(&self) -> &SrcLoc {
+    pub fn get_loc(&self) -> &SrcLocEnum {
         &self.loc
     }
 
@@ -275,14 +290,14 @@ impl UBVHit {
     }
     pub fn parse_value_guard(line: &str) -> std::result::Result<UBVHit, GuardParseError> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
-        let loc = SrcLoc::parse_line_with_prefix(line, VAL_PREFIX)?;
+        let loc = SrcLocEnum::parse_line_with_prefix(line, VAL_PREFIX)?;
 
         Ok(UBVHit { loc })
     }
 
     pub fn from_str(slice: &str) -> Result<Self> {
         // example: /path/to/file.c:123:45
-        let loc = SrcLoc::from_str(slice)?;
+        let loc = SrcLocEnum::from_str(slice)?;
         Ok(UBVHit { loc })
     }
 }
@@ -380,7 +395,7 @@ impl ThreadExecTree {
     ) -> std::result::Result<(Option<ExecAction>, Option<THCPEntry>), GuardParseError> {
         // value hit
         if let Some(ubv_hit) = GuardParseError::to_eyre(UBVHit::parse_value_guard(line))? {
-            return Ok((Some(ExecAction::Value(ubv_hit)), None));
+            return Ok((Some(ExecAction::UBV(ubv_hit)), None));
         }
         // simple guards
         if let Some(intra_act) = GuardParseError::to_eyre(JumpAction::parse_jump_guard(line))? {
@@ -462,12 +477,16 @@ impl ThreadExecTree {
         )
         .get_node_ptr();
 
-        let act_type = FuncActionType::Call {
-            child_ptr,
+        // let act_type = FuncActionType::Call {
+        //     child_ptr,
+        //     invoc_loc: invoc_loc_op,
+        // };
+
+        let func_act = FuncAction::Call {
+            func_name: func_name,
+            child_ptr: child_ptr,
             invoc_loc: invoc_loc_op,
         };
-
-        let func_act = FuncAction::new(act_type, func_name.to_owned());
         return Ok(func_act);
     }
 
@@ -480,44 +499,195 @@ impl ThreadExecTree {
     //     Ok(ExecAction::Func(func_act))
     // }
 
+    fn search_for_func_by_act_loc<'a>(
+        act_loc: &'a SrcLocEnum,
+        func_info_table: &'a FuncInfoTable,
+    ) -> Option<&'a FuncInfo> {
+        match act_loc {
+            SrcLocEnum::NullLoc => {
+                return None;
+            }
+            SrcLocEnum::Valid(valid_loc) => {
+                // sorted func info vec
+                let func_info_vec = match func_info_table.get(&valid_loc.fpath) {
+                    None => {
+                        log::warn!(
+                            "File path not found in function info table: {:?}",
+                            valid_loc.fpath
+                        );
+                        return None;
+                    }
+                    Some(vec) => vec,
+                };
+
+                // binary search
+                let mut left: usize = 0;
+                let mut right = func_info_vec.len() - 1;
+                while left <= right {
+                    let mid = (left + right) / 2;
+                    let mid_func = &func_info_vec[mid];
+                    match mid_func.compare_line_and_col(valid_loc.line, valid_loc.col) {
+                        Ordering::Equal => {
+                            return Some(mid_func);
+                        }
+                        Ordering::Greater => {
+                            // if mid == 0 {
+                            //     break;
+                            // }
+                            right = mid - 1;
+                        }
+                        Ordering::Less => {
+                            left = mid + 1;
+                        }
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    pub fn unwind_until(&mut self, func_name: &str) -> Result<()> {
+        loop {
+            let cur_func_name = {
+                let cur_node = self.cur_node_ptr.borrow();
+                cur_node.get_func_name_or_init().to_owned()
+            };
+            if cur_func_name == func_name {
+                break;
+            }
+            self.add_act(&ExecAction::Func(FuncAction::Return {
+                func_name: cur_func_name,
+            }))?;
+            let parent_ptr = self.cur_node_ptr.borrow().get_parent_ptr().ok_or_else(|| {
+                eyre::eyre!(
+                    "Reached root node while unwinding for function: {}",
+                    func_name
+                )
+            })?;
+            // drop(cur_node);
+            self.cur_node_ptr = parent_ptr;
+
+            if self.cur_depth > 0 {
+                self.cur_depth -= 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn update_context_on_unwind(
+        &mut self,
+        act: &ExecAction,
+        proj_info: &ProjectInfo,
+    ) -> Result<()> {
+        let cur_node = self.cur_node_ptr.borrow();
+        if cur_node.get_len() == 0 {
+            return Ok(());
+        }
+
+        let prev_act = cur_node
+            .get_act_at(cur_node.get_len() - 1)
+            .ok_or_else(|| eyre::eyre!("Failed to get last action from current node"))?;
+
+        if !matches!(prev_act, ExecAction::Func(FuncAction::Unwind { .. })) {
+            return Ok(());
+        }
+        drop(cur_node);
+
+        let act_loc = match act.get_match_loc() {
+            None => return Ok(()),
+            Some(loc) => loc,
+        };
+
+        // check whether current action is out of current function
+        let loc_ord = {
+            let cur_node = self.cur_node_ptr.borrow();
+            let cur_func_name = cur_node.get_func_name_or_init();
+            let func_loc = proj_info.func_loc_map.get(cur_func_name).ok_or_else(|| {
+                eyre::eyre!("Function name not found in project info: {}", cur_func_name)
+            })?;
+
+            match func_loc.compare_src_loc(act_loc) {
+                None => {
+                    // ignore the invalid action location
+                    return Ok(());
+                }
+                Some(ord) => ord,
+            }
+        };
+
+        match loc_ord {
+            Ordering::Equal => {
+                return Ok(());
+            }
+            _ => {
+                // get corresponding function based on act_loc
+                let func_info =
+                    match Self::search_for_func_by_act_loc(act_loc, &proj_info.func_info_table) {
+                        None => return Ok(()),
+                        Some(func_info) => func_info,
+                    };
+                let func_name = &func_info.name;
+
+                // unwind operatioon
+                self.unwind_until(func_name)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn read_line(
         &mut self,
         line: &str,
-        // cons_op: Option<&Constraint>,
-        // hit_cnt: &mut usize,
+        proj_info: &ProjectInfo, // cons_op: Option<&Constraint>,
+                                 // hit_cnt: &mut usize,
     ) -> Result<Option<THCPEntry>> {
         let (act_op, thcp_entry_op) = self.parse_guard(line)?;
 
         if let Some(act) = act_op {
+            // update context on unwind situation
+
+            self.update_context_on_unwind(&act, proj_info)?;
             // add action to current node
             self.add_act(&act)?;
 
             // update context information in case of function actions: current pointer and depth
             if let ExecAction::Func(func_act) = act {
-                if func_act.is_call() {
-                    // update current node pointer to the new function node
-                    let child_ptr = func_act.get_child_ptr().ok_or_else(|| {
-                        eyre::eyre!(
-                            "Function action is a call but has no child pointer: {}",
-                            func_act.get_name()
-                        )
-                    })?;
-                    self.cur_node_ptr = child_ptr;
-                    self.cur_depth += 1;
-                    if self.cur_depth > self.max_depth {
-                        self.max_depth = self.cur_depth;
+                match func_act {
+                    FuncAction::Call {
+                        func_name: _,
+                        child_ptr,
+                        invoc_loc: _,
+                    } => {
+                        self.cur_node_ptr = child_ptr;
+                        self.cur_depth += 1;
+                        if self.cur_depth > self.max_depth {
+                            self.max_depth = self.cur_depth;
+                        }
                     }
-                } else if func_act.is_return() {
-                    // move up in the tree
-                    let parent_ptr =
-                        self.cur_node_ptr.borrow().get_parent_ptr().ok_or_else(|| {
-                            eyre::eyre!(
-                                "Current node has no parent, cannot return: {}",
-                                func_act.get_name()
-                            )
-                        })?;
-                    self.cur_node_ptr = parent_ptr;
-                    self.cur_depth -= 1;
+                    FuncAction::Return { func_name } => {
+                        // judge equivalence of function name of current node and return action.
+                        {
+                            let cur_node = self.cur_node_ptr.borrow();
+                            let cur_func_name = cur_node.get_func_name_or_init();
+                            assert!(
+                                cur_func_name == func_name
+                                    , "Current function name ({}) does not match return action function name ({}). Tree might be corrupted.", cur_func_name, func_name);
+                        };
+                        // move up in the tree
+                        let parent_ptr =
+                            self.cur_node_ptr.borrow().get_parent_ptr().ok_or_else(|| {
+                                eyre::eyre!(
+                                    "Current node has no parent, cannot return: {}",
+                                    func_name
+                                )
+                            })?;
+                        self.cur_node_ptr = parent_ptr;
+                        if self.cur_depth > 0 {
+                            self.cur_depth -= 1;
+                        }
+                    }
+                    FuncAction::Unwind { .. } => {}
                 }
             }
 
@@ -550,7 +720,10 @@ impl ThreadExecTree {
     //     Self::from_guard_file_impl(fs_path.as_ref(), Some(cons))
     // }
 
-    pub fn from_guard_file<P: AsRef<Path>>(fs_path: P) -> Result<(Self, THCPMAPPING)> {
+    pub fn from_guard_file<P: AsRef<Path>>(
+        fs_path: P,
+        proj_info: &ProjectInfo,
+    ) -> Result<(Self, THCPMAPPING)> {
         let mut exec_tree: ThreadExecTree = ThreadExecTree::new(fs_path.as_ref())?;
         let mut thcp_mapping = HashMap::new();
 
@@ -561,7 +734,7 @@ impl ThreadExecTree {
             log::debug!("Processing line {}: {:?}", idx + 1, fs_path.as_ref());
             let line = line_res?;
             // let exec_act = ExecAction::from_line(&line)?;
-            let thcp_entry_op = exec_tree.read_line(&line)?;
+            let thcp_entry_op = exec_tree.read_line(&line, proj_info)?;
             if let Some(thcp_entry) = thcp_entry_op {
                 thcp_mapping.insert(thcp_entry.0, thcp_entry.1);
             }

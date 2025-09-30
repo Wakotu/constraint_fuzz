@@ -287,9 +287,11 @@ bool recur_release(const char *func_name, const FuncStack &func_stack) {
 }
 
 void pop_func_impl(const char *func_name, FuncStack &func_stack,
-                   const char *prompt) {
+                   const char *prompt, bool unwind = false) {
   recur_release(func_name, func_stack);
-  print_func_rec_to_file(prompt, func_name);
+  // Do not output if unwind
+  if (!unwind)
+    print_func_rec_to_file(prompt, func_name);
   func_stack.pop_back();
 }
 
@@ -303,7 +305,7 @@ void pop_func(const char *func_name) {
     pop_func_impl(func_name, func_stack, "return from");
   } else {
     while (func_name != func_stack.back()) {
-      pop_func_impl(func_stack.back().c_str(), func_stack, "unwind from");
+      pop_func_impl(func_stack.back().c_str(), func_stack, "unwind from", true);
     }
     pop_func_impl(func_name, func_stack, "return from");
   }

@@ -45,3 +45,12 @@ string getStmtType(Stmt stmt) {
                   then result = "ReturnStmt"
                   else result = "OtherStmt"
 }
+
+string getElementType(Element e) {
+  if e instanceof Function
+  then result = "Function"
+  else
+    if e instanceof Stmt
+    then result = "Stmt"
+    else result = "OtherElement"
+}

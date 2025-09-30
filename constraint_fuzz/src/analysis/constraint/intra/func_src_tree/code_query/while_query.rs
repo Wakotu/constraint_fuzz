@@ -39,6 +39,10 @@ impl CodeQLRunner {
                         log::warn!("Failed to parse while record: {:?}, err: {}", record, msg);
                         continue;
                     }
+                    LocParseError::ZeroErr => {
+                        log::warn!("Failed to parse while record (zero loc): {:?}", record);
+                        continue;
+                    }
                     LocParseError::FormatErr(msg) => {
                         bail!("Failed to parse while record: {:?}, err: {}", record, msg);
                     }

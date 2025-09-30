@@ -14,56 +14,69 @@ use crate::{
 };
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum SrcLoc {
-    NullLoc,
-    Valid {
-        fpath: PathBuf,
-        line: usize,
-        col: usize,
-    },
+pub struct ValidSrcLoc {
+    pub fpath: PathBuf,
+    pub line: usize,
+    pub col: usize,
 }
 
-impl fmt::Debug for SrcLoc {
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum SrcLocEnum {
+    NullLoc,
+    Valid(ValidSrcLoc),
+}
+
+impl fmt::Debug for SrcLocEnum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SrcLoc::NullLoc => return write!(f, "NullLoc"),
-            SrcLoc::Valid { fpath, line, col } => {
-                if fpath.as_os_str().is_empty() {
-                    return write!(f, "ValidLoc: <empty file path>:{}:{}", line, col);
+            SrcLocEnum::NullLoc => return write!(f, "NullLoc"),
+            SrcLocEnum::Valid(valid_loc) => {
+                if valid_loc.fpath.as_os_str().is_empty() {
+                    return write!(
+                        f,
+                        "ValidLoc: <empty file path>:{}:{}",
+                        valid_loc.line, valid_loc.col
+                    );
                 }
-                return write!(f, "ValidLoc: {}:{}:{}", fpath.display(), line, col);
+                return write!(
+                    f,
+                    "ValidLoc: {}:{}:{}",
+                    valid_loc.fpath.display(),
+                    valid_loc.line,
+                    valid_loc.col
+                );
             }
         }
     }
 }
 
-impl SrcLoc {
+impl SrcLocEnum {
     pub fn get_src_path(&self) -> Option<&Path> {
         match self {
-            SrcLoc::NullLoc => None,
-            SrcLoc::Valid { fpath, .. } => Some(fpath.as_path()),
+            SrcLocEnum::NullLoc => None,
+            SrcLocEnum::Valid(valid_loc) => Some(valid_loc.fpath.as_path()),
         }
     }
 
     pub fn get_line(&self) -> Option<usize> {
         match self {
-            SrcLoc::NullLoc => None,
-            SrcLoc::Valid { line, .. } => Some(*line),
+            SrcLocEnum::NullLoc => None,
+            SrcLocEnum::Valid(valid_loc) => Some(valid_loc.line),
         }
     }
 
     pub fn get_col(&self) -> Option<usize> {
         match self {
-            SrcLoc::NullLoc => None,
-            SrcLoc::Valid { col, .. } => Some(*col),
+            SrcLocEnum::NullLoc => None,
+            SrcLocEnum::Valid(valid_loc) => Some(valid_loc.col),
         }
     }
 
     pub fn is_valid(&self) -> bool {
         match self {
-            SrcLoc::NullLoc => false,
-            SrcLoc::Valid { fpath, line, col } => {
-                !fpath.as_os_str().is_empty() && *line > 0 && *col > 0
+            SrcLocEnum::NullLoc => false,
+            SrcLocEnum::Valid(valid_loc) => {
+                !valid_loc.fpath.as_os_str().is_empty() && valid_loc.line > 0 && valid_loc.col > 0
             }
         }
     }
@@ -128,33 +141,37 @@ impl SrcLoc {
         let line = line_str.parse::<usize>()?;
         let fpath = PathBuf::from(fpath_str);
 
-        Ok(Self::Valid {
+        if line == 0 || col == 0 {
+            return Ok(Self::NullLoc);
+        }
+
+        Ok(Self::Valid(ValidSrcLoc {
             fpath: fpath,
             line: line,
             col: col,
-        })
+        }))
     }
 
     pub fn from_cov_loc<P: AsRef<Path>>(cov_loc: &Loc, fpath: P) -> Self {
-        Self::Valid {
+        Self::Valid(ValidSrcLoc {
             fpath: fpath.as_ref().to_owned(),
             line: cov_loc[0],
             col: cov_loc[1],
-        }
+        })
     }
 }
 
 pub struct SrcRegion {
-    start: SrcLoc,
-    end: SrcLoc,
+    start: SrcLocEnum,
+    end: SrcLocEnum,
     func_name: String,
 }
 
 impl SrcRegion {
     pub fn from_range(rng: &Range, fpath: &Path, func_name: &str) -> Result<Self> {
         let [start, end] = rng.extract_locs()?;
-        let start_loc = SrcLoc::from_cov_loc(&start, fpath);
-        let end_loc = SrcLoc::from_cov_loc(&end, fpath);
+        let start_loc = SrcLocEnum::from_cov_loc(&start, fpath);
+        let end_loc = SrcLocEnum::from_cov_loc(&end, fpath);
 
         if start_loc.get_src_path() != end_loc.get_src_path() {
             bail!("Start and end locations must be in the same file");

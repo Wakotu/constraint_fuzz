@@ -10,7 +10,7 @@ use crate::{
         exec_tree::thread_tree::{
             incre_dot_counter, DotId, ExecFuncNode, FuncIter, SharedFuncNodePtr, ThreadExecTree,
         },
-        loc::SrcLoc,
+        loc::SrcLocEnum,
     },
     deopt::utils::write_bytes_to_file,
 };
@@ -216,7 +216,7 @@ impl ThreadExecTree {
                 let sub_func_ptr = func_act.get_child_ptr().ok_or_else(|| {
                     eyre::eyre!(
                         "Function action is a call but has no child pointer: {}",
-                        func_act.get_name()
+                        func_act.get_func_name()
                     )
                 })?;
                 let sub_func_id = Self::draw_func_cluster(sub_func_ptr, digraph)?;
@@ -471,7 +471,7 @@ impl ThreadExecTree {
         log::info!("Analyzing most hit loop headers in the execution tree...");
         const LOOP_NUM: usize = 10;
 
-        let mut loop_header_count: HashMap<SrcLoc, usize> = HashMap::new();
+        let mut loop_header_count: HashMap<SrcLocEnum, usize> = HashMap::new();
 
         for func_node_ptr in self.func_node_bfs_iter() {
             let func_node = func_node_ptr.borrow();

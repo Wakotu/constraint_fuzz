@@ -93,6 +93,13 @@ impl CodeQLRunner {
                             );
                             continue;
                         }
+                        LocParseError::ZeroErr => {
+                            log::warn!(
+                                "Warning: Skipping ForStmt record at loc {} due to zero loc",
+                                rec.loc
+                            );
+                            continue;
+                        }
                     },
                 };
 

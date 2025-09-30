@@ -6,7 +6,7 @@ use color_eyre::eyre::bail;
 use crate::analysis::constraint::inter::{
     error::GuardParseError,
     exec_tree::thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
-    loc::SrcLoc,
+    loc::SrcLocEnum,
 };
 
 /// Get the prefix of a line, which is the substring from the start to the first occurrence of ':'.
@@ -25,20 +25,25 @@ pub fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
 }
 
 #[derive(Clone)]
-pub enum FuncActionType {
+pub enum FuncAction {
     Call {
+        func_name: String,
         child_ptr: SharedFuncNodePtr,
-        invoc_loc: Option<SrcLoc>,
+        invoc_loc: Option<SrcLocEnum>,
     },
-    Return,
-    Unwind,
+    Return {
+        func_name: String,
+    },
+    Unwind {
+        loc: SrcLocEnum,
+    },
 }
 
-impl FuncActionType {
+impl FuncAction {
     const ENT_PREFIX: &'static str = "enter ";
     const INVOC_PREFIX: &'static str = "Function Invocation:";
     const RET_PREFIX: &'static str = "return from ";
-    const UNWIND_PREFIX: &'static str = "unwind from ";
+    const UNWIND_PREFIX: &'static str = "Longjmp Invocation:";
 
     // pub fn is_call_guard(line: &str) -> bool {
     //     line.starts_with(Self::ENT_PREFIX)
@@ -63,77 +68,72 @@ impl FuncActionType {
     pub fn get_func_name_from_return_guard(line: &str) -> Result<&str> {
         Self::get_func_name_from_line(line, Self::RET_PREFIX)
     }
-
-    pub fn get_func_name_from_unwind_guard(line: &str) -> Result<&str> {
-        Self::get_func_name_from_line(line, Self::UNWIND_PREFIX)
-    }
-}
-
-#[derive(Clone)]
-pub struct FuncAction {
-    act_type: FuncActionType,
-    func_name: String,
 }
 
 impl FuncAction {
     pub fn get_dot_id(&self, cnt: usize) -> String {
-        match &self.act_type {
-            FuncActionType::Call {
+        match &self {
+            FuncAction::Call {
                 child_ptr: _,
                 invoc_loc: _,
+                func_name: _,
             } => format!("Function_Call_Action_{}", cnt),
-            FuncActionType::Return => format!("Function_Return_Action_{}", cnt),
-            FuncActionType::Unwind => format!("Function_Unwind_Action_{}", cnt),
+            FuncAction::Return { func_name: _ } => format!("Function_Return_Action_{}", cnt),
+            FuncAction::Unwind { loc: _ } => format!("Function_Unwind_Action_{}", cnt),
         }
     }
 }
 
 impl fmt::Debug for FuncAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.act_type {
-            FuncActionType::Call {
+        match &self {
+            FuncAction::Call {
                 child_ptr,
                 invoc_loc,
+                func_name,
             } => {
                 write!(
                     f,
                     "Call({}) -> Child({:?}) at {:?}",
-                    self.func_name,
+                    func_name,
                     child_ptr.borrow(),
                     invoc_loc
                 )
             }
-            FuncActionType::Return => write!(f, "Return({})", self.func_name),
-            FuncActionType::Unwind => write!(f, "Unwind({})", self.func_name),
+            FuncAction::Return { func_name } => write!(f, "Return({})", func_name),
+            FuncAction::Unwind { loc } => write!(f, "Unwind({:?})", loc),
         }
     }
 }
 
 impl FuncAction {
-    pub fn new(act_type: FuncActionType, func_name: String) -> Self {
-        Self {
-            act_type,
-            func_name,
+    pub fn get_func_name(&self) -> &str {
+        match self {
+            FuncAction::Call {
+                func_name,
+                child_ptr: _,
+                invoc_loc: _,
+            } => func_name,
+            // actually operation name
+            FuncAction::Unwind { loc: _ } => "Unwind",
+            FuncAction::Return { func_name } => func_name,
         }
     }
 
-    pub fn get_name(&self) -> &str {
-        &self.func_name
-    }
-
     pub fn is_call(&self) -> bool {
-        matches!(self.act_type, FuncActionType::Call { .. })
+        matches!(self, FuncAction::Call { .. })
     }
 
     pub fn is_return(&self) -> bool {
-        matches!(self.act_type, FuncActionType::Return)
+        matches!(self, FuncAction::Return { .. })
     }
 
     pub fn get_child_ptr(&self) -> Option<SharedFuncNodePtr> {
-        if let FuncActionType::Call {
+        if let FuncAction::Call {
             child_ptr,
             invoc_loc: _,
-        } = &self.act_type
+            func_name: _,
+        } = self
         {
             Some(child_ptr.clone())
         } else {
@@ -142,49 +142,52 @@ impl FuncAction {
     }
 
     pub fn parse_return_guard(line: &str) -> Result<Self> {
-        let func_name = FuncActionType::get_func_name_from_return_guard(line)?;
-        Ok(Self {
-            act_type: FuncActionType::Return,
+        let func_name = FuncAction::get_func_name_from_return_guard(line)?;
+        Ok(Self::Return {
             func_name: func_name.to_owned(),
         })
     }
 
     pub fn parse_unwind_guard(line: &str) -> Result<Self> {
-        let func_name = FuncActionType::get_func_name_from_unwind_guard(line)?;
-        Ok(Self {
-            act_type: FuncActionType::Unwind,
-            func_name: func_name.to_owned(),
-        })
+        if !line.starts_with(FuncAction::UNWIND_PREFIX) {
+            bail!("Line does not start with unwind prefix: {}", line);
+        }
+
+        let invoc_part = &line[FuncAction::UNWIND_PREFIX.len() + 1..];
+        let loc_end_pos = invoc_part
+            .find(char::is_whitespace)
+            .ok_or_else(|| eyre::eyre!("No whitespace found in unwind part: {}", invoc_part))?;
+        let loc_str = &invoc_part[..loc_end_pos];
+        let loc = SrcLocEnum::from_str(loc_str)?;
+
+        Ok(Self::Unwind { loc })
     }
 
     /// return invoc_loc extracted and number of characters consumed(including the trailing space)
-    fn parse_invoc_part(line: &str) -> Result<(SrcLoc, usize)> {
-        if !line.starts_with(FuncActionType::INVOC_PREFIX) {
+    fn parse_invoc_part(line: &str) -> Result<(SrcLocEnum, usize)> {
+        if !line.starts_with(FuncAction::INVOC_PREFIX) {
             bail!("Line does not start with invocation prefix: {}", line);
         }
 
         // + 1 for the space after the prefix
-        let invoc_part = &line[FuncActionType::INVOC_PREFIX.len() + 1..];
+        let invoc_part = &line[FuncAction::INVOC_PREFIX.len() + 1..];
         let loc_end_pos = invoc_part
             .find(char::is_whitespace)
             .ok_or_else(|| eyre::eyre!("No whitespace found in invocation part: {}", invoc_part))?;
         let loc_str = &invoc_part[..loc_end_pos];
-        let loc = SrcLoc::from_str(loc_str)?;
-        Ok((
-            loc,
-            loc_end_pos + 1 + FuncActionType::INVOC_PREFIX.len() + 1,
-        ))
+        let loc = SrcLocEnum::from_str(loc_str)?;
+        Ok((loc, loc_end_pos + 1 + FuncAction::INVOC_PREFIX.len() + 1))
     }
 
     fn parse_entry_part(slice: &str) -> Result<String> {
-        let func_name = FuncActionType::get_func_name_from_line(slice, FuncActionType::ENT_PREFIX)?;
+        let func_name = Self::get_func_name_from_line(slice, Self::ENT_PREFIX)?;
         Ok(func_name.to_owned())
     }
 
     /// parse a line of call guard to get (invoc_loc_op, func_name)
     pub fn parse_call_guard(
         line: &str,
-    ) -> std::result::Result<(Option<SrcLoc>, String), GuardParseError> {
+    ) -> std::result::Result<(Option<SrcLocEnum>, String), GuardParseError> {
         let (invoc_loc_op, pref_len) = match Self::parse_invoc_part(line) {
             Ok((loc, len)) => (Some(loc), len),
             Err(e) => {
@@ -192,6 +195,7 @@ impl FuncAction {
                 (None, 0)
             }
         };
+
         let entry_part = &line[pref_len..];
         let func_name = match Self::parse_entry_part(entry_part) {
             Ok(name) => name,
@@ -218,8 +222,8 @@ impl FuncAction {
 // }
 
 #[derive(Clone)]
-enum JumpActionType {
-    BrGuard { val_loc: SrcLoc },
+pub enum JumpActionType {
+    BrGuard { val_loc: SrcLocEnum },
     MergeBrGuard,
     SwitchGuard,
     IndirectGuard,
@@ -252,10 +256,10 @@ impl fmt::Debug for JumpActionType {
 
 #[derive(Clone)]
 pub struct JumpAction {
-    intra_type: JumpActionType,
-    from_loc: SrcLoc,
+    pub intra_type: JumpActionType,
+    pub from_loc: SrcLocEnum,
     cond_val: bool,
-    dest_loc: SrcLoc,
+    dest_loc: SrcLocEnum,
 }
 
 impl JumpAction {
@@ -296,7 +300,7 @@ impl JumpAction {
         let cond_loc_str = iter
             .next()
             .ok_or_else(|| eyre::eyre!("Missing condition location"))?;
-        let cond_loc = SrcLoc::from_str(cond_loc_str)?;
+        let cond_loc = SrcLocEnum::from_str(cond_loc_str)?;
 
         let cond_val_str = iter
             .next()
@@ -314,7 +318,7 @@ impl JumpAction {
         let dest_loc_str = iter
             .next()
             .ok_or_else(|| eyre::eyre!("Missing destination location"))?;
-        let dest_loc = SrcLoc::from_str(dest_loc_str)?;
+        let dest_loc = SrcLocEnum::from_str(dest_loc_str)?;
 
         Ok(Self {
             intra_type,
@@ -344,7 +348,7 @@ impl JumpAction {
             let intra_act_str = line_cont[idx..].trim();
 
             // parse value hit
-            let va_loc = SrcLoc::from_str(value_hit_str)?;
+            let va_loc = SrcLocEnum::from_str(value_hit_str)?;
             let br_act_type = JumpActionType::BrGuard { val_loc: va_loc };
 
             // parse intra action
@@ -367,13 +371,13 @@ impl JumpAction {
             bail!("Expected 3 parts in intra action, found {}", parts.len());
         }
 
-        let cond_loc = SrcLoc::from_str(parts[0])?;
+        let cond_loc = SrcLocEnum::from_str(parts[0])?;
         let cond_val = match parts[1] {
             "1" => true,
             "0" => false,
             _ => bail!("Unexpected condition value: {}", parts[1]),
         };
-        let dest_loc = SrcLoc::from_str(parts[2])?;
+        let dest_loc = SrcLocEnum::from_str(parts[2])?;
 
         Ok(Self {
             intra_type: act_type,
@@ -386,7 +390,7 @@ impl JumpAction {
 
 #[derive(Clone)]
 pub struct ThreadAction {
-    loc: SrcLoc,
+    pub loc: SrcLocEnum,
     tid: Tid, // using String for simplicity, can be changed to a more appropriate type
 }
 
@@ -416,7 +420,7 @@ impl ThreadAction {
             )));
         }
 
-        let loc = SrcLoc::from_str(parts[0])?;
+        let loc = SrcLocEnum::from_str(parts[0])?;
         let tid = parts[1].parse::<Tid>().map_err(|_| {
             GuardParseError::as_parse_err(eyre::eyre!(
                 "Failed to parse thread ID from part: {}",
@@ -447,7 +451,7 @@ enum LoopActionType {
         entry_type: LoopEntryType,
     },
     LoopEnd {
-        out_loc: SrcLoc,
+        out_loc: SrcLocEnum,
         end_type: LoopEndType,
     },
 }
@@ -455,7 +459,7 @@ enum LoopActionType {
 #[derive(Clone)]
 pub struct LoopAction {
     la_type: LoopActionType,
-    header_loc: SrcLoc,
+    pub header_loc: SrcLocEnum,
 }
 
 impl LoopAction {
@@ -467,6 +471,10 @@ impl LoopAction {
     const OUT_PREFIX: &'static str = "Out of Loop:";
     const NO_START_PREFIX: &'static str = "Loop end without loop start:";
 
+    pub fn is_loop_entry(&self) -> bool {
+        matches!(self.la_type, LoopActionType::LoopEntry { .. })
+    }
+
     fn parse_loop_cnt(slice: &str) -> Result<usize> {
         const LOOP_CNT_PREFIX: &str = "at count";
         let slice = slice.trim();
@@ -477,7 +485,7 @@ impl LoopAction {
     }
 
     /// Parse content part for header_loc and count.
-    fn parse_header_loc_with_count(content_slice: &str) -> Result<(SrcLoc, usize)> {
+    fn parse_header_loc_with_count(content_slice: &str) -> Result<(SrcLocEnum, usize)> {
         let content_slice = content_slice.trim();
         let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
             eyre::eyre!(
@@ -486,14 +494,16 @@ impl LoopAction {
             )
         })?;
         let loc_part = &content_slice[..pos];
-        let header_loc = SrcLoc::from_str(loc_part)?;
+        let header_loc = SrcLocEnum::from_str(loc_part)?;
         let cnt_part = &content_slice[pos..];
         let count = Self::parse_loop_cnt(cnt_part)?;
 
         Ok((header_loc, count))
     }
 
-    fn parse_header_out_loc_with_count(content_slice: &str) -> Result<(SrcLoc, SrcLoc, usize)> {
+    fn parse_header_out_loc_with_count(
+        content_slice: &str,
+    ) -> Result<(SrcLocEnum, SrcLocEnum, usize)> {
         let content_slice = content_slice.trim();
         let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
             eyre::eyre!(
@@ -502,7 +512,7 @@ impl LoopAction {
             )
         })?;
         let loc_part = &content_slice[..pos];
-        let header_loc = SrcLoc::from_str(loc_part)?;
+        let header_loc = SrcLocEnum::from_str(loc_part)?;
 
         let content_slice = content_slice[pos..].trim();
         let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
@@ -512,7 +522,7 @@ impl LoopAction {
             )
         })?;
         let loc_part = &content_slice[..pos];
-        let out_loc = SrcLoc::from_str(loc_part)?;
+        let out_loc = SrcLocEnum::from_str(loc_part)?;
 
         let cnt_part = &content_slice[pos..];
         let count = Self::parse_loop_cnt(cnt_part)?;
@@ -520,7 +530,7 @@ impl LoopAction {
         Ok((header_loc, out_loc, count))
     }
 
-    fn parse_header_out_loc_wo_count(content_slice: &str) -> Result<(SrcLoc, SrcLoc)> {
+    fn parse_header_out_loc_wo_count(content_slice: &str) -> Result<(SrcLocEnum, SrcLocEnum)> {
         let content_slice = content_slice.trim();
         // header loc part
         let pos = content_slice.find(char::is_whitespace).ok_or_else(|| {
@@ -530,7 +540,7 @@ impl LoopAction {
             )
         })?;
         let loc_part = &content_slice[..pos];
-        let header_loc = SrcLoc::from_str(loc_part)?;
+        let header_loc = SrcLocEnum::from_str(loc_part)?;
 
         // out_loc part
         let content_slice = content_slice[pos..].trim();
@@ -539,7 +549,7 @@ impl LoopAction {
             .unwrap_or(content_slice.len());
         let loc_part = &content_slice[..pos];
 
-        let out_loc = SrcLoc::from_str(loc_part)?;
+        let out_loc = SrcLocEnum::from_str(loc_part)?;
 
         Ok((header_loc, out_loc))
     }
@@ -603,11 +613,11 @@ impl LoopAction {
         )))
     }
 
-    pub fn get_header_loc(&self) -> &SrcLoc {
+    pub fn get_header_loc(&self) -> &SrcLocEnum {
         &self.header_loc
     }
 
-    pub fn get_out_loc(&self) -> Option<&SrcLoc> {
+    pub fn get_out_loc(&self) -> Option<&SrcLocEnum> {
         match &self.la_type {
             LoopActionType::LoopEntry {
                 count: _,
@@ -704,10 +714,60 @@ impl RecurAction {
 pub enum ExecAction {
     Func(FuncAction),
     Intra(JumpAction),
-    Value(UBVHit),
+    /// Unconditional Branch Value
+    UBV(UBVHit),
     Loop(LoopAction),
     Recur(RecurAction),
     Thread(ThreadAction),
+}
+
+impl ExecAction {
+    /**
+     * Statement-Action match related methods
+     */
+
+    pub fn get_match_loc(&self) -> Option<&SrcLocEnum> {
+        match self {
+            ExecAction::UBV(ubv_hit) => Some(ubv_hit.get_loc()),
+            ExecAction::Func(func_act) => match &func_act {
+                FuncAction::Call {
+                    child_ptr: _,
+                    invoc_loc,
+                    func_name: _,
+                } => invoc_loc.as_ref(),
+                FuncAction::Return { .. } => None,
+                FuncAction::Unwind { loc } => Some(loc),
+            },
+            ExecAction::Intra(intra_act) => Some(&intra_act.from_loc),
+            ExecAction::Loop(loop_act) => Some(&loop_act.header_loc),
+            ExecAction::Recur(_) => None,
+            ExecAction::Thread(thread_act) => Some(&thread_act.loc),
+        }
+    }
+
+    pub fn plain_stmt_suitable(&self) -> bool {
+        match self {
+            ExecAction::UBV(_) => true,
+            ExecAction::Func(func_act) => match func_act {
+                FuncAction::Call {
+                    child_ptr: _,
+                    invoc_loc: _,
+                    func_name: _,
+                } => true,
+                FuncAction::Return { .. } => false,
+                FuncAction::Unwind { .. } => false,
+            },
+            ExecAction::Intra(jump_act) => match jump_act.intra_type {
+                JumpActionType::BrGuard { .. } => true,
+                JumpActionType::MergeBrGuard => true,
+                JumpActionType::SwitchGuard => false,
+                JumpActionType::IndirectGuard => false,
+            },
+            ExecAction::Loop(_) => false,
+            ExecAction::Recur(_) => false,
+            ExecAction::Thread(_) => true,
+        }
+    }
 }
 
 impl ExecAction {
@@ -735,7 +795,7 @@ impl DotId for ExecAction {
     fn get_dot_id(&self) -> String {
         let cnt = incre_dot_counter();
         match self {
-            ExecAction::Value(_) => format!("UBVHit_Action_{}", cnt),
+            ExecAction::UBV(_) => format!("UBVHit_Action_{}", cnt),
             ExecAction::Func(func_act) => func_act.get_dot_id(cnt),
             ExecAction::Intra(intra_act) => intra_act.get_dot_id(cnt),
             ExecAction::Loop(_) => format!("Loop_Action_{}", cnt),
@@ -751,7 +811,7 @@ impl DotId for ExecAction {
 impl fmt::Debug for ExecAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExecAction::Value(ubv_hit) => write!(f, "UBVHit: {:?}", ubv_hit),
+            ExecAction::UBV(ubv_hit) => write!(f, "UBVHit: {:?}", ubv_hit),
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
             ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),

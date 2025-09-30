@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::loc::SrcLoc,
+    analysis::constraint::inter::loc::SrcLocEnum,
     feedback::branches::constraints::{Loc, LocTrait, Range, RangeTrait, UBConstraint},
 };
 use color_eyre::eyre::Result;
@@ -67,7 +67,7 @@ impl UBConstraint {
 
     /// return start location switch structure
     /// Assume as switch UB
-    pub fn get_switch_start(&self) -> Result<SrcLoc> {
+    pub fn get_switch_start(&self) -> Result<SrcLocEnum> {
         todo!()
     }
 }

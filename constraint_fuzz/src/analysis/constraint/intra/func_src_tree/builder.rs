@@ -1,14 +1,15 @@
-use std::{collections::HashMap, path::Path, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc, sync::OnceLock};
 
 use crate::analysis::constraint::{
     exec_rec::case_map,
     intra::func_src_tree::{
         code_query::{
             block_query::{BlockMap, BlockPool},
-            file_func_query::FuncMap,
+            file_func_query::{FuncInfoTable, FuncLocMap, FuncMap},
             for_query::{ForPool, ForSet},
             func_invoc_query::FuncInvocMap,
             if_query::{IfPool, IfSet},
+            scope_var_query::{FuncScopeMap, StmtScopeMap},
             switch_query::{SwitchMap, SwitchPool},
             while_query::{WhilePool, WhileSet},
             CodeQLRunner, FuncTable,
@@ -20,40 +21,68 @@ use crate::analysis::constraint::{
 use color_eyre::eyre::Result;
 use eyre::bail;
 
-pub struct SrcForestBuilder {
-    func_map: FuncMap,
-    block_pool: BlockPool,
-    if_pool: IfPool,
-    switch_pool: SwitchPool,
-    while_pool: WhilePool,
-    for_pool: ForPool,
-    func_invoc_map: FuncInvocMap,
+pub struct ProjectInfo {
+    pub func_info_table: FuncInfoTable,
+    pub func_loc_map: FuncLocMap,
+    pub block_pool: BlockPool,
+    pub if_pool: IfPool,
+    pub switch_pool: SwitchPool,
+    pub while_pool: WhilePool,
+    pub for_pool: ForPool,
+    pub func_invoc_map: FuncInvocMap,
+    pub func_scope_map: FuncScopeMap,
+    pub stmt_scope_map: StmtScopeMap,
 }
 
-pub type FuncSrcForest = FuncTable<FuncSrcTree>;
-
-impl SrcForestBuilder {
+impl ProjectInfo {
     pub fn from_codeql_runner(runner: &CodeQLRunner) -> Result<Self> {
-        let func_map = runner.get_func_map()?;
+        let (func_info_table, func_loc_map) = runner.get_func_info_map()?;
         let block_pool = runner.get_block_pool()?;
         let if_pool = runner.get_if_pool()?;
         let switch_pool = runner.get_switch_pool()?;
         let while_pool = runner.get_while_pool()?;
         let for_pool = runner.get_for_pool()?;
         let func_invoc_map = runner.get_func_invoc_map()?;
+        let func_scope_map = runner.get_func_scope_map()?;
+        let stmt_scope_map = runner.get_stmt_scope_map()?;
 
         Ok(Self {
-            func_map,
+            func_info_table,
+            func_loc_map,
             block_pool,
             if_pool,
             switch_pool,
             while_pool,
             for_pool,
             func_invoc_map,
+            func_scope_map,
+            stmt_scope_map,
         })
     }
 
+    pub fn new() -> Result<Self> {
+        let runner = CodeQLRunner::new();
+        Self::from_codeql_runner(&runner)
+    }
+}
+
+static PROJECT_INFO: OnceLock<ProjectInfo> = OnceLock::new();
+
+pub fn get_project_info() -> &'static ProjectInfo {
+    PROJECT_INFO.get_or_init(|| ProjectInfo::new().expect("Failed to initialize ProjectInfo"))
+}
+
+pub struct SrcForestBuilder<'a> {
+    proj_info: &'a ProjectInfo,
+}
+
+pub type FuncSrcForest = FuncTable<FuncSrcTree>;
+
+impl<'a> SrcForestBuilder<'a> {
     // other methods
+    pub fn new(proj_info: &'a ProjectInfo) -> Self {
+        Self { proj_info }
+    }
 
     pub fn create_node_recur(
         cur_entry: &ChildEntry,
@@ -63,6 +92,7 @@ impl SrcForestBuilder {
         while_set_op: Option<&WhileSet>,
         for_set_op: Option<&ForSet>,
         func_invoc_map: &FuncInvocMap,
+        stmt_scope_map: &StmtScopeMap,
         // parent_ptr: SharedStmtNodePtr,
     ) -> Result<SharedStmtNodePtr> {
         match cur_entry.stmt_type {
@@ -81,10 +111,15 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                             func_invoc_map,
+                            stmt_scope_map,
                         )?;
                         child_ptr_vec.push(child_ptr);
                     }
-                    let cur_ptr = StmtNode::create_block_ptr(block_stmt, child_ptr_vec.clone());
+                    let cur_ptr = StmtNode::create_block_ptr(
+                        block_stmt,
+                        child_ptr_vec.clone(),
+                        stmt_scope_map,
+                    );
                     // parent ptr setting
                     for (idx, child_ptr) in child_ptr_vec.into_iter().enumerate() {
                         child_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
@@ -109,6 +144,7 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                             func_invoc_map,
+                            stmt_scope_map,
                         )?;
                         let else_ptr_op = match &if_stmt.else_entry {
                             Some(else_entry) => Some(Self::create_node_recur(
@@ -119,6 +155,7 @@ impl SrcForestBuilder {
                                 while_set_op,
                                 for_set_op,
                                 func_invoc_map,
+                                stmt_scope_map,
                             )?),
                             None => None,
                         };
@@ -127,6 +164,7 @@ impl SrcForestBuilder {
                             then_ptr.clone(),
                             else_ptr_op.clone(),
                             func_invoc_map,
+                            stmt_scope_map,
                         );
                         // parent ptr setting
                         then_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
@@ -166,6 +204,7 @@ impl SrcForestBuilder {
                                     while_set_op,
                                     for_set_op,
                                     func_invoc_map,
+                                    stmt_scope_map,
                                 )?;
                                 case_ptr_vec.push(case_ptr);
                             }
@@ -175,6 +214,7 @@ impl SrcForestBuilder {
                             switch_stmt,
                             case_ptr_map.clone(),
                             func_invoc_map,
+                            stmt_scope_map,
                         );
                         // parent ptr setting
                         for (case_loc, case_ptr_vec) in case_ptr_map.into_iter() {
@@ -209,11 +249,13 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                             func_invoc_map,
+                            stmt_scope_map,
                         )?;
                         let cur_ptr = StmtNode::create_while_ptr(
                             while_stmt,
                             body_ptr.clone(),
                             func_invoc_map,
+                            stmt_scope_map,
                         );
                         // parent ptr setting
                         body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
@@ -242,11 +284,13 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                             func_invoc_map,
+                            stmt_scope_map,
                         )?;
                         let cur_ptr = StmtNode::create_while_ptr(
                             while_stmt,
                             body_ptr.clone(),
                             func_invoc_map,
+                            stmt_scope_map,
                         );
                         // parent ptr setting
                         body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
@@ -275,9 +319,14 @@ impl SrcForestBuilder {
                             while_set_op,
                             for_set_op,
                             func_invoc_map,
+                            stmt_scope_map,
                         )?;
-                        let cur_ptr =
-                            StmtNode::create_for_ptr(for_stmt, body_ptr.clone(), func_invoc_map);
+                        let cur_ptr = StmtNode::create_for_ptr(
+                            for_stmt,
+                            body_ptr.clone(),
+                            func_invoc_map,
+                            stmt_scope_map,
+                        );
                         // parent ptr setting
                         body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
                         Ok(cur_ptr)
@@ -293,17 +342,21 @@ impl SrcForestBuilder {
             }
             _ => {
                 // For Plain Stmt.
-                Ok(StmtNode::create_plain_ptr(cur_entry, func_invoc_map))
+                Ok(StmtNode::create_plain_ptr(
+                    cur_entry,
+                    func_invoc_map,
+                    stmt_scope_map,
+                ))
             }
         }
     }
 
     pub fn build_tree(&self, file_path: &Path, func_name: &str) -> Result<Option<FuncSrcTree>> {
-        let block_map_op = self.block_pool.get_value(func_name);
-        let if_set_op = self.if_pool.get_value(func_name);
-        let switch_map_op = self.switch_pool.get_value(func_name);
-        let while_set_op = self.while_pool.get_value(func_name);
-        let for_set_op = self.for_pool.get_value(func_name);
+        let block_map_op = self.proj_info.block_pool.get_value(func_name);
+        let if_set_op = self.proj_info.if_pool.get_value(func_name);
+        let switch_map_op = self.proj_info.switch_pool.get_value(func_name);
+        let while_set_op = self.proj_info.while_pool.get_value(func_name);
+        let for_set_op = self.proj_info.for_pool.get_value(func_name);
 
         let block_map = match block_map_op {
             Some(m) => m,
@@ -329,21 +382,26 @@ impl SrcForestBuilder {
             switch_map_op,
             while_set_op,
             for_set_op,
-            &self.func_invoc_map,
+            &self.proj_info.func_invoc_map,
+            &self.proj_info.stmt_scope_map,
         )?;
-        Ok(Some(FuncSrcTree::new(root_ptr)))
+        Ok(Some(FuncSrcTree::new(
+            root_ptr,
+            func_name,
+            &self.proj_info.func_scope_map,
+        )))
     }
 
     pub fn build_forest(&self) -> Result<FuncSrcForest> {
         let mut forest = FuncTable::new();
-        for (file_path, func_names) in &self.func_map {
-            for func_name in func_names {
-                let tree_op = self.build_tree(file_path, func_name)?;
+        for (file_path, func_invo_vec) in &self.proj_info.func_info_table {
+            for func_info in func_invo_vec {
+                let tree_op = self.build_tree(file_path, &func_info.name)?;
                 let tree = match tree_op {
                     Some(t) => t,
                     None => continue,
                 };
-                forest.insert(func_name, tree);
+                forest.insert(&func_info.name, tree);
             }
         }
         Ok(forest)

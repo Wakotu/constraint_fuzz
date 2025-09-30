@@ -18,9 +18,6 @@ pub mod stmt_collect;
 
 // define Dataflow info for constraitns: a set of Statements which results in variables in that Constraint
 
-pub type Statement = String; // TODO: define a proper type for statements
-pub type ConsDFInfo = Vec<Statement>;
-
 pub struct RevAnalyzer {
     ub_cons_list: Vec<UBConstraint>,
     // work_dir: PathBuf,
@@ -57,21 +54,4 @@ impl RevAnalyzer {
             exec_list,
         })
     }
-
-    /**
-     * analyze start
-     */
-
-    /**
-     * analyze procedure
-     */
-    pub fn analyze_constraint(&self, cons: &UBConstraint) -> Result<ConsDFInfo> {
-        todo!()
-    }
-
-    pub fn build(&self, cons: &UBConstraint) -> Result<ConsDFInfo> {
-        self.analyze_constraint(cons)
-    }
 }
-
-// TODO: add unit tests

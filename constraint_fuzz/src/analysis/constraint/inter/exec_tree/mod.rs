@@ -2,8 +2,9 @@ use std::{collections::HashMap, fs::read_dir, path::Path};
 
 use color_eyre::eyre::Result;
 
-use crate::analysis::constraint::inter::exec_tree::thread_tree::{
-    SharedFuncNodePtr, ThreadExecTree, Tid, THCPMAPPING,
+use crate::analysis::constraint::{
+    inter::exec_tree::thread_tree::{SharedFuncNodePtr, ThreadExecTree, Tid, THCPMAPPING},
+    intra::func_src_tree::builder::{get_project_info, ProjectInfo},
 };
 
 pub mod action;
@@ -40,7 +41,16 @@ impl ExecForest {
         Ok(fname.ends_with(MAIN_SUFFIX))
     }
 
-    pub fn from_guard_dir<P: AsRef<Path>>(guard_dir: P) -> Result<Self> {
+    pub fn iter_trees(&self) -> impl Iterator<Item = &ThreadExecTree> {
+        self.thread_tree_list.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.thread_tree_list.len()
+    }
+
+    pub fn from_guard_dir<P: AsRef<Path>>(guard_dir: P) -> Result<ExecForest> {
+        let proj_info = get_project_info();
         assert!(guard_dir.as_ref().is_dir());
         let mut tree_list = vec![];
         let mut thcp_mapping = HashMap::new();
@@ -52,30 +62,22 @@ impl ExecForest {
             let ent = ent_res?;
             let guard_fpath = ent.path();
 
-            if Self::is_main_guard(&guard_fpath)? {
+            if ExecForest::is_main_guard(&guard_fpath)? {
                 idx = tree_list.len();
             }
 
-            let (tree, sub_mapping) = ThreadExecTree::from_guard_file(&guard_fpath)?;
+            let (tree, sub_mapping) = ThreadExecTree::from_guard_file(&guard_fpath, proj_info)?;
 
             let tid = tree.get_tid();
             tid_mapping.insert(tid, tree_list.len());
             tree_list.push(tree);
             thcp_mapping.extend(sub_mapping);
         }
-        Ok(Self {
+        Ok(ExecForest {
             thcp_mapping,
             tid_mapping,
             thread_tree_list: tree_list,
             main_idx: idx,
         })
-    }
-
-    pub fn iter_trees(&self) -> impl Iterator<Item = &ThreadExecTree> {
-        self.thread_tree_list.iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.thread_tree_list.len()
     }
 }

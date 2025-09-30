@@ -10,3 +10,4 @@ ignore_dir:
   - build
   - third_party
   - tools
+  - .ql_build

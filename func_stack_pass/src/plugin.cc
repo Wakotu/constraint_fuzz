@@ -240,7 +240,7 @@ FunctionCallee get_thread_rec_func_decl(Module &M) {
   Br Instruction operations
 */
 
-Instruction *get_cond_instr_from_br(BranchInst *br_inst) {
+Instruction *get_cond_inst_from_br(BranchInst *br_inst) {
   Value *cond = br_inst->getCondition();
   if (!cond) {
     errs() << RED << "[Error] " << RESET
@@ -260,7 +260,7 @@ Instruction *get_cond_instr_from_br(BranchInst *br_inst) {
 }
 
 bool is_merge_br(BranchInst *br_inst) {
-  Instruction *cond_inst = get_cond_instr_from_br(br_inst);
+  Instruction *cond_inst = get_cond_inst_from_br(br_inst);
   if (!cond_inst) {
     return false; // no condition instruction
   }
@@ -329,7 +329,7 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
     }
 
     // offer value location
-    Instruction *cond_val_inst = get_cond_instr_from_br(br_inst);
+    Instruction *cond_val_inst = get_cond_inst_from_br(br_inst);
     if (!cond_val_inst) {
       ss << "NullLoc ";
       goto br_rec; // skip the condition location if no condition instruction
@@ -583,7 +583,7 @@ bool instr_unconditional_br_value(Instruction *term, Module &M) {
   if (!br_inst->isConditional()) {
     return false;
   }
-  Instruction *cond_inst = get_cond_instr_from_br(br_inst);
+  Instruction *cond_inst = get_cond_inst_from_br(br_inst);
   if (!cond_inst) {
     return false;
   }
@@ -915,6 +915,42 @@ bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
   return flag;
 }
 
+bool instru_for_longjmp_invocation(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = false;
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
+          // check if the call instruction is a longjmp function
+          if (call_inst->getCalledFunction() &&
+              call_inst->getCalledFunction()->getName() == "longjmp") {
+            flag = true; // found a longjmp call
+            errs() << GREEN << "[Longjmp Invocation Instrument] " << RESET
+                   << "Longjmp Call Instruction: ";
+            call_inst->print(errs());
+            errs() << "\n";
+
+            SrcLoc call_loc = get_src_loc(&I, M);
+            errs() << BLUE << "[Longjmp Invocation Instrument] " << RESET
+                   << "Longjmp Call Location: " << call_loc << "\n";
+
+            std::stringstream ss;
+            ss << "Longjmp Invocation: " << call_loc;
+            std::string rec = ss.str();
+
+            // create instrumentation IR builder
+            InstrumentationIRBuilder irb(&I);
+            auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
+            auto content_log_func_cl = get_content_log_func_decl(M);
+            irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+          }
+        }
+      }
+    }
+  }
+  return flag;
+}
+
 bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // auto printf_cl = add_printf_decl(m);
   // modification already
@@ -927,6 +963,7 @@ bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // flag |= instr_bool_value(M);
   flag |= instru_for_loop_context(M, MAM);
   flag |= instru_for_thread_creation(M, MAM);
+  flag |= instru_for_longjmp_invocation(M, MAM);
   return flag;
 }
 

@@ -14,6 +14,7 @@ pub mod block_query;
 pub mod custom_class_query;
 pub mod for_query;
 pub mod if_query;
+pub mod scope_var_query;
 pub mod switch_query;
 pub mod while_query;
 

@@ -127,7 +127,10 @@ mod tests {
     use walkdir::WalkDir;
 
     use crate::{
-        analysis::constraint::inter::exec_tree::{action::FuncActionType, ExecForest},
+        analysis::constraint::{
+            inter::exec_tree::{ExecForest, ExecForestBuilder},
+            intra::func_src_tree::{builder::ProjectInfo, code_query::CodeQLRunner},
+        },
         deopt::utils::{get_file_lineno, timer_it},
         setup_test_run_entry,
     };
@@ -225,8 +228,12 @@ mod tests {
 
         let guard_dir = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-08-14 11:39:06/exec_recs/guards/0ae2706207b8f8ea054bf44e755a6f4e";
 
+        let runner = CodeQLRunner::new();
+        let proj_info = ProjectInfo::from_codeql_runner(&runner)?;
+        let builder = ExecForestBuilder::new(&proj_info);
+
         let exec_forest = timer_it(
-            || ExecForest::from_guard_dir(guard_dir),
+            || builder.from_guard_dir(guard_dir),
             "Guard Directory Parsing",
         )?;
 
@@ -244,44 +251,44 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_guard_file_function_count() -> Result<()> {
-        setup_test_run_entry("libaom", true)?;
-        let gaurd_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-26 12:10:38/exec_recs/guards/9dae87ac037f2dffb8ab66e59c827dc8/139690227110080_main";
+    // #[test]
+    // fn test_guard_file_function_count() -> Result<()> {
+    //     setup_test_run_entry("libaom", true)?;
+    //     let gaurd_fpath = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-06-26 12:10:38/exec_recs/guards/9dae87ac037f2dffb8ab66e59c827dc8/139690227110080_main";
 
-        let file = File::open(gaurd_fpath)?;
-        let reader = BufReader::new(file);
+    //     let file = File::open(gaurd_fpath)?;
+    //     let reader = BufReader::new(file);
 
-        let mut func_count_dict = HashMap::new();
-        for (idx, line_res) in reader.lines().enumerate() {
-            let line = line_res?;
+    //     let mut func_count_dict = HashMap::new();
+    //     for (idx, line_res) in reader.lines().enumerate() {
+    //         let line = line_res?;
 
-            let func_name = match FuncActionType::get_func_name_from_return_guard(&line) {
-                Ok(name) => name,
-                Err(e) => {
-                    log::error!(
-                        "Failed to get function name from line {}: {}",
-                        idx + 1,
-                        line
-                    );
-                    log::error!("Error: {}", e);
-                    continue;
-                }
-            };
-            log::debug!("Line {}: {}", idx + 1, func_name);
-            *func_count_dict.entry(func_name.to_owned()).or_insert(0) += 1;
-        }
+    //         let func_name = match FuncActionType::get_func_name_from_return_guard(&line) {
+    //             Ok(name) => name,
+    //             Err(e) => {
+    //                 log::error!(
+    //                     "Failed to get function name from line {}: {}",
+    //                     idx + 1,
+    //                     line
+    //                 );
+    //                 log::error!("Error: {}", e);
+    //                 continue;
+    //             }
+    //         };
+    //         log::debug!("Line {}: {}", idx + 1, func_name);
+    //         *func_count_dict.entry(func_name.to_owned()).or_insert(0) += 1;
+    //     }
 
-        // sort the function counts in descending order
-        let mut func_count_vec: Vec<_> = func_count_dict.into_iter().collect();
-        func_count_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    //     // sort the function counts in descending order
+    //     let mut func_count_vec: Vec<_> = func_count_dict.into_iter().collect();
+    //     func_count_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
-        // output first 10 pairs
-        log::info!("Function counts (top 10):");
-        for (func_name, count) in func_count_vec.iter().take(10) {
-            log::info!("{}: {}", func_name, count);
-        }
+    //     // output first 10 pairs
+    //     log::info!("Function counts (top 10):");
+    //     for (func_name, count) in func_count_vec.iter().take(10) {
+    //         log::info!("{}: {}", func_name, count);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }

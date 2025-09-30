@@ -36,6 +36,10 @@ impl FuncInvoc {
                     log::warn!("Skipping loc {} due to value error: {}", rec.loc, msg);
                     return Ok(None);
                 }
+                LocParseError::ZeroErr => {
+                    log::warn!("Skipping loc {} due to zero value", rec.loc);
+                    return Ok(None);
+                }
             },
         };
         Ok(Some(Self {

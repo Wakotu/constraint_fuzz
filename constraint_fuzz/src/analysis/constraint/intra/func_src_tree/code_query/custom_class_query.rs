@@ -1,11 +1,18 @@
 use color_eyre::eyre::Result;
+use once_cell::sync::Lazy;
+use std::collections::VecDeque;
+
+use tree_sitter::{Language, Node, Parser};
+
+// Use the safe exported constant from tree-sitter-c
 use eyre::bail;
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
 };
+use tree_sitter_c::LANGUAGE;
 
-use my_macros::EquivByLoc;
+use my_macros::{EquivByLoc, EquivByName};
 use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
@@ -55,10 +62,26 @@ impl EnumRec {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum VarTypeVariant {
+    Primitive,
+    CustomClass,
+    Compound,
+}
+
+#[derive(Debug, Clone)]
+pub struct VarTypeSegment {
+    pub start_idx: usize,
+    pub end_idx: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct VarType {
-    name: String,
+    pub name: String,
     /// None for primitive types, Some for user-defined classes
-    loc: Option<QLLoc>,
+    pub loc: Option<QLLoc>,
+    pub variants: VarTypeVariant,
+    pub seg_vec: Vec<VarTypeSegment>,
 }
 
 impl PartialEq for VarType {
@@ -87,8 +110,107 @@ impl Ord for VarType {
     }
 }
 
+pub struct VarSegIter<'a> {
+    var_type: &'a VarType,
+    curr_idx: usize,
+}
+
+impl<'a> Iterator for VarSegIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr_idx >= self.var_type.seg_vec.len() {
+            return None;
+        }
+        let seg = &self.var_type.seg_vec[self.curr_idx];
+        self.curr_idx += 1;
+        Some(&self.var_type.name[seg.start_idx..seg.end_idx])
+    }
+}
+
+static TYPE_BLACK_LIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut set = HashSet::new();
+    // Built-in Types
+    set.insert("void");
+    set.insert("char");
+    set.insert("short");
+    set.insert("int");
+    set.insert("long");
+    set.insert("float");
+    set.insert("double");
+    set.insert("signed");
+    set.insert("unsigned");
+    set.insert("bool");
+    set.insert("wchar_t");
+    set.insert("size_t");
+
+    // Common Specifiers
+    set.insert("const");
+    set.insert("volatile");
+    set.insert("static");
+    set.insert("extern");
+    set.insert("register");
+    set.insert("mutable");
+    set.insert("inline");
+    set.insert("virtual");
+    set.insert("friend");
+    set.insert("typedef");
+
+    // Common Derived Type Modifiers
+    set.insert("*");
+    set.insert("[");
+    set.insert("]");
+    set.insert("(");
+    set.insert(")");
+
+    set
+});
+
 impl VarType {
+    pub fn is_cc_seg(type_seg: &str) -> bool {
+        // check type seg not in black list
+        TYPE_BLACK_LIST.contains(type_seg) == false
+    }
+
+    pub fn iter_type_seg(&self) -> VarSegIter {
+        VarSegIter {
+            var_type: self,
+            curr_idx: 0,
+        }
+    }
+
+    fn get_type_seg_vec(type_name: &str) -> Vec<VarTypeSegment> {
+        let mut parser = Parser::new();
+        parser.set_language(&LANGUAGE.into()).unwrap();
+
+        let tree = parser.parse(type_name, None).unwrap();
+        let root = tree.root_node();
+
+        let mut q: VecDeque<Node> = VecDeque::new();
+        q.push_back(root);
+
+        let mut seg_vec: Vec<VarTypeSegment> = vec![];
+
+        while !q.is_empty() {
+            let node = q.pop_front().unwrap();
+            if node.child_count() == 0 {
+                seg_vec.push(VarTypeSegment {
+                    start_idx: node.start_byte(),
+                    end_idx: node.end_byte(),
+                });
+            }
+
+            for i in 0..node.child_count() {
+                let child = node.child(i).unwrap();
+                q.push_back(child);
+            }
+        }
+        seg_vec
+    }
+
     pub fn new(name: &str, loc: &str) -> std::result::Result<Self, LocParseError> {
+        let mut var_variant = VarTypeVariant::CustomClass;
+        let mut seg_vec = vec![];
         let loc = match QLLoc::from_str(loc) {
             Ok(l) => Some(l),
             Err(e) => match e {
@@ -97,11 +219,22 @@ impl VarType {
                 LocParseError::FormatErr(msg) => {
                     return Err(LocParseError::FormatErr(msg));
                 }
+                LocParseError::ZeroErr => {
+                    seg_vec = Self::get_type_seg_vec(name);
+                    if seg_vec.len() > 1 {
+                        var_variant = VarTypeVariant::Compound;
+                    } else {
+                        var_variant = VarTypeVariant::Primitive;
+                    }
+                    None
+                }
             },
         };
         Ok(Self {
             name: name.to_owned(),
             loc,
+            variants: var_variant,
+            seg_vec,
         })
     }
 
@@ -138,6 +271,10 @@ impl FieldEntry {
 
     pub fn get_type_loc(&self) -> Option<&QLLoc> {
         self.field_type.get_loc()
+    }
+
+    pub fn get_type(&self) -> &VarType {
+        &self.field_type
     }
 }
 
@@ -222,26 +359,81 @@ impl ClassEntry {
     }
 }
 
-#[derive(EquivByLoc)]
+#[derive(EquivByName)]
 pub struct CustomClass {
     loc: QLLoc,
     name: String,
     variants: CustomClassVariant,
 }
 
-impl Borrow<QLLoc> for CustomClass {
-    fn borrow(&self) -> &QLLoc {
-        &self.loc
-    }
+// pub type CustomClassSet = HashSet<CustomClass>;
+
+pub struct CustomClassSet {
+    data: HashSet<CustomClass>,
 }
 
-pub type CustomClassSet = HashSet<CustomClass>;
+impl CustomClassSet {
+    pub fn new() -> Self {
+        Self {
+            data: HashSet::new(),
+        }
+    }
+
+    pub fn insert(&mut self, cc: CustomClass) -> bool {
+        self.data.insert(cc)
+    }
+
+    pub fn contains(&self, cc: &CustomClass) -> bool {
+        self.data.contains(cc)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CustomClass> {
+        self.data.iter()
+    }
+
+    fn search_by_name(&self, name: &str) -> Vec<&CustomClass> {
+        let cc = match self.data.get(name) {
+            None => return vec![],
+            Some(cc) => cc,
+        };
+
+        match &cc.variants {
+            CustomClassVariant::Enum { .. } => vec![cc],
+            CustomClassVariant::Struct { fields } => {
+                let mut cc_vec = vec![cc];
+                for field in fields.iter() {
+                    let sub_cc_vec = self.search(&field.get_type());
+                    cc_vec.extend(sub_cc_vec);
+                }
+                cc_vec
+            }
+        }
+    }
+
+    pub fn search(&self, var_type: &VarType) -> Vec<&CustomClass> {
+        match var_type.variants {
+            VarTypeVariant::Primitive => vec![],
+            VarTypeVariant::Compound => {
+                let mut cc_vec = vec![];
+                // collect all valid type seg
+                for type_seg in var_type.iter_type_seg() {
+                    if VarType::is_cc_seg(type_seg) {
+                        let seg_cc_vec = self.search_by_name(type_seg);
+                        cc_vec.extend(seg_cc_vec);
+                    }
+                }
+                cc_vec
+            }
+            VarTypeVariant::CustomClass => self.search_by_name(&var_type.name),
+        }
+    }
+}
 
 impl CodeQLRunner {
     pub fn get_custom_class_set(&self) -> Result<CustomClassSet> {
         let sf_rec_vec: Vec<StructFieldRec> = self.run_query_and_parse(STRUCT_FIELD_QUERY)?;
         let enum_rec_vec: Vec<EnumRec> = self.run_query_and_parse(ENUM_QUERY)?;
-        let mut cc_set: CustomClassSet = HashSet::new();
+        let mut cc_set: CustomClassSet = CustomClassSet::new();
 
         let mut struct_map: HashMap<ClassEntry, Vec<FieldEntry>> = HashMap::new();
         for rec in sf_rec_vec.into_iter() {
@@ -254,7 +446,7 @@ impl CodeQLRunner {
                             msg
                         );
                     }
-                    LocParseError::ValueErr(_) => {
+                    LocParseError::ValueErr(_) | LocParseError::ZeroErr => {
                         continue;
                     }
                 },
@@ -273,7 +465,7 @@ impl CodeQLRunner {
                     LocParseError::FormatErr(msg) => {
                         bail!("Error parsing location in enum query result: {}", msg);
                     }
-                    LocParseError::ValueErr(_) => {
+                    LocParseError::ValueErr(_) | LocParseError::ZeroErr => {
                         continue;
                     }
                 },
