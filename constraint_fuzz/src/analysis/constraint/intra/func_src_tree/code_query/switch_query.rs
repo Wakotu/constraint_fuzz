@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{CodeQLRunner, FuncTable},
-    stmts::{ChildEntry, LocParseError, QLLoc, SwitchStmt},
+    stmts::{ChildEntry, LocParseError, LocTypeParseError, QLLoc, SwitchStmt},
 };
 
 const SWITCH_QUERY_NAME: &str = "switch_stmt.ql";
@@ -29,7 +29,7 @@ pub struct SwitchRecord {
 pub type SwitchEntry = (SwitchStmt, QLLoc, ChildEntry);
 
 impl SwitchRecord {
-    pub fn to_entry(&self) -> std::result::Result<SwitchEntry, LocParseError> {
+    pub fn to_entry(&self) -> std::result::Result<SwitchEntry, LocTypeParseError> {
         let switch_stmt = SwitchStmt::from_loc_and_expr(&self.loc, &self.expr_loc)?;
         let case_expr_loc = QLLoc::from_str(&self.case_expr_loc)?;
         let child_entry = ChildEntry::from_loc_and_type(&self.case_stmt_loc, &self.case_stmt_type)?;
@@ -47,16 +47,12 @@ impl CodeQLRunner {
             let (switch_stmt, case_expr_loc, case_stmt_entry) = match record.to_entry() {
                 Ok(e) => e,
                 Err(e) => match e {
-                    LocParseError::ValueErr(msg) => {
+                    LocTypeParseError::ValueErr(msg) => {
                         log::warn!("Failed to parse switch record: {:?}, err: {}", record, msg);
                         continue;
                     }
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!("Failed to parse switch record: {:?}, err: {}", record, msg);
-                    }
-                    LocParseError::ZeroErr => {
-                        log::warn!("Failed to parse switch record (zero loc): {:?}", record);
-                        continue;
                     }
                 },
             };

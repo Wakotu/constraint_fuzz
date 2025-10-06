@@ -15,7 +15,7 @@ use crate::{
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ValidSrcLoc {
-    pub fpath: PathBuf,
+    pub file_path: PathBuf,
     pub line: usize,
     pub col: usize,
 }
@@ -31,7 +31,7 @@ impl fmt::Debug for SrcLocEnum {
         match self {
             SrcLocEnum::NullLoc => return write!(f, "NullLoc"),
             SrcLocEnum::Valid(valid_loc) => {
-                if valid_loc.fpath.as_os_str().is_empty() {
+                if valid_loc.file_path.as_os_str().is_empty() {
                     return write!(
                         f,
                         "ValidLoc: <empty file path>:{}:{}",
@@ -41,7 +41,7 @@ impl fmt::Debug for SrcLocEnum {
                 return write!(
                     f,
                     "ValidLoc: {}:{}:{}",
-                    valid_loc.fpath.display(),
+                    valid_loc.file_path.display(),
                     valid_loc.line,
                     valid_loc.col
                 );
@@ -54,7 +54,7 @@ impl SrcLocEnum {
     pub fn get_src_path(&self) -> Option<&Path> {
         match self {
             SrcLocEnum::NullLoc => None,
-            SrcLocEnum::Valid(valid_loc) => Some(valid_loc.fpath.as_path()),
+            SrcLocEnum::Valid(valid_loc) => Some(valid_loc.file_path.as_path()),
         }
     }
 
@@ -76,7 +76,9 @@ impl SrcLocEnum {
         match self {
             SrcLocEnum::NullLoc => false,
             SrcLocEnum::Valid(valid_loc) => {
-                !valid_loc.fpath.as_os_str().is_empty() && valid_loc.line > 0 && valid_loc.col > 0
+                !valid_loc.file_path.as_os_str().is_empty()
+                    && valid_loc.line > 0
+                    && valid_loc.col > 0
             }
         }
     }
@@ -146,7 +148,7 @@ impl SrcLocEnum {
         }
 
         Ok(Self::Valid(ValidSrcLoc {
-            fpath: fpath,
+            file_path: fpath,
             line: line,
             col: col,
         }))
@@ -154,7 +156,7 @@ impl SrcLocEnum {
 
     pub fn from_cov_loc<P: AsRef<Path>>(cov_loc: &Loc, fpath: P) -> Self {
         Self::Valid(ValidSrcLoc {
-            fpath: fpath.as_ref().to_owned(),
+            file_path: fpath.as_ref().to_owned(),
             line: cov_loc[0],
             col: cov_loc[1],
         })

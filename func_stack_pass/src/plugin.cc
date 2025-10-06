@@ -236,6 +236,18 @@ FunctionCallee get_thread_rec_func_decl(Module &M) {
   return thread_guard_func_cl;
 }
 
+FunctionCallee get_ubv_rec_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+  FunctionType *ubv_rec_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty, i8_ty}, false);
+  FunctionCallee ubv_rec_func_cl =
+      M.getOrInsertFunction("ubv_rec", ubv_rec_func_ty);
+  return ubv_rec_func_cl;
+}
+
 /**
   Br Instruction operations
 */
@@ -373,6 +385,7 @@ br_rec:
 
 bool instr_br_inst(Instruction *term, Module &M) {
   if (BranchInst *br_inst = dyn_cast<BranchInst>(term)) {
+    // only instruments at conditional branch instructions
     if (br_inst->isConditional()) {
       // output_cond_instruction(br_inst, M);
       SrcLoc br_loc = get_src_loc(br_inst, M);
@@ -543,7 +556,7 @@ bool instr_from_phi_node(PHINode *phi_node, Module &M) {
 
       errs() << "\n";
       instr_from_phi_node(sub_node, M);
-    } else {
+    } else if (val_inst->getType()->isIntegerTy(1)) {
       SrcLoc val_loc = get_src_loc(val_inst, M);
 
       auto it = ubr_loc_seen.find(val_loc);
@@ -559,15 +572,18 @@ bool instr_from_phi_node(PHINode *phi_node, Module &M) {
              << "Location: " << val_loc << "\n";
 
       std::stringstream ss;
-      ss << "Unconditional Branch Value: " << val_loc;
+      ss << val_loc;
       std::string rec = ss.str();
 
-      FunctionCallee rec_log_func_cl = get_rec_log_func_decl(M);
+      FunctionCallee ubv_rec_cl = get_ubv_rec_func_decl(M);
       InstrumentationIRBuilder irb(val_inst);
+
+      // NOTE: line break at the end
+      Constant *fmt_str = irb.CreateGlobalStringPtr("UBV Value: %d\n");
       // create global string
-      auto rec_str_ptr = irb.CreateGlobalStringPtr(rec);
+      auto loc_str_ptr = irb.CreateGlobalStringPtr(rec);
       // insert invocation
-      irb.CreateCall(rec_log_func_cl, {rec_str_ptr});
+      irb.CreateCall(ubv_rec_cl, {loc_str_ptr, val_inst});
     }
   }
 

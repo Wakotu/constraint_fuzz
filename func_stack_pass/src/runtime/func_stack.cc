@@ -492,3 +492,13 @@ void thread_rec(const char *loc, void *tid_ptr) {
 //   ss << "Loop: " << loc << " " << count;
 //   print_rec_to_file(ss.str().c_str());
 // }
+
+/**
+  Unconditional Branch Value Instrumentation
+*/
+
+void ubv_rec(const char *loc, bool val) {
+  std::stringstream ss;
+  ss << "Unconditional Branch Value: " << loc << " " << val;
+  print_rec_to_file_with_guard(ss.str().c_str());
+}

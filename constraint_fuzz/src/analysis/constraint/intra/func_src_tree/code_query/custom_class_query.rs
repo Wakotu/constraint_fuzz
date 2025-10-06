@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::CodeQLRunner,
-    stmts::{LocParseError, QLLoc},
+    stmts::{LocParseError, LocTypeParseError, QLLoc},
 };
 
 const STRUCT_FIELD_QUERY: &str = "struct_field.ql";
@@ -33,7 +33,9 @@ pub struct StructFieldRec {
 }
 
 impl StructFieldRec {
-    pub fn to_entry_pair(&self) -> std::result::Result<(ClassEntry, FieldEntry), LocParseError> {
+    pub fn to_entry_pair(
+        &self,
+    ) -> std::result::Result<(ClassEntry, FieldEntry), LocTypeParseError> {
         let class_entry = ClassEntry::new(&self.struct_loc, &self.struct_name)?;
         let field_entry = FieldEntry::new(
             &self.field_name,
@@ -128,7 +130,7 @@ impl<'a> Iterator for VarSegIter<'a> {
     }
 }
 
-static TYPE_BLACK_LIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+static CUSTOM_TYPE_BLACK_LIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     let mut set = HashSet::new();
     // Built-in Types
     set.insert("void");
@@ -169,7 +171,7 @@ static TYPE_BLACK_LIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 impl VarType {
     pub fn is_cc_seg(type_seg: &str) -> bool {
         // check type seg not in black list
-        TYPE_BLACK_LIST.contains(type_seg) == false
+        CUSTOM_TYPE_BLACK_LIST.contains(type_seg) == false
     }
 
     pub fn iter_type_seg(&self) -> VarSegIter {
@@ -177,6 +179,10 @@ impl VarType {
             var_type: self,
             curr_idx: 0,
         }
+    }
+
+    pub fn is_void(&self) -> bool {
+        self.name == "void" && self.loc.is_none()
     }
 
     fn get_type_seg_vec(type_name: &str) -> Vec<VarTypeSegment> {
@@ -208,7 +214,7 @@ impl VarType {
         seg_vec
     }
 
-    pub fn new(name: &str, loc: &str) -> std::result::Result<Self, LocParseError> {
+    pub fn new(name: &str, loc: &str) -> std::result::Result<Self, LocTypeParseError> {
         let mut var_variant = VarTypeVariant::CustomClass;
         let mut seg_vec = vec![];
         let loc = match QLLoc::from_str(loc) {
@@ -217,7 +223,7 @@ impl VarType {
                 // Consider ValueError as primitive type circumstance
                 LocParseError::ValueErr(_) => None,
                 LocParseError::FormatErr(msg) => {
-                    return Err(LocParseError::FormatErr(msg));
+                    return Err(LocTypeParseError::FormatErr(msg));
                 }
                 LocParseError::ZeroErr => {
                     seg_vec = Self::get_type_seg_vec(name);
@@ -261,7 +267,7 @@ impl FieldEntry {
         field_name: &str,
         field_type_name: &str,
         field_type_loc: &str,
-    ) -> std::result::Result<Self, LocParseError> {
+    ) -> std::result::Result<Self, LocTypeParseError> {
         let var_type = VarType::new(field_type_name, field_type_loc)?;
         Ok(Self {
             field_name: field_name.to_owned(),
@@ -440,13 +446,13 @@ impl CodeQLRunner {
             let (class_entry, field_entry) = match rec.to_entry_pair() {
                 Ok(p) => p,
                 Err(e) => match e {
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!(
                             "Error parsing location in struct field query result: {}",
                             msg
                         );
                     }
-                    LocParseError::ValueErr(_) | LocParseError::ZeroErr => {
+                    LocTypeParseError::ValueErr(_) => {
                         continue;
                     }
                 },

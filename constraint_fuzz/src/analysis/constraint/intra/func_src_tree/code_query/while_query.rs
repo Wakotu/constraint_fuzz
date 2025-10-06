@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{CodeQLRunner, FuncTable},
-    stmts::{LocParseError, WhileStmt},
+    stmts::{LocTypeParseError, WhileStmt},
 };
 
 const WHILE_QUERY_NAME: &str = "while_stmt.ql";
@@ -35,15 +35,11 @@ impl CodeQLRunner {
             let while_stmt = match WhileStmt::from_record(&record) {
                 Ok(s) => s,
                 Err(e) => match e {
-                    LocParseError::ValueErr(msg) => {
+                    LocTypeParseError::ValueErr(msg) => {
                         log::warn!("Failed to parse while record: {:?}, err: {}", record, msg);
                         continue;
                     }
-                    LocParseError::ZeroErr => {
-                        log::warn!("Failed to parse while record (zero loc): {:?}", record);
-                        continue;
-                    }
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!("Failed to parse while record: {:?}, err: {}", record, msg);
                     }
                 },

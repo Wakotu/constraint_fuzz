@@ -5,7 +5,7 @@ use crate::analysis::constraint::{
     intra::func_src_tree::{
         code_query::{
             block_query::{BlockMap, BlockPool},
-            file_func_query::{FuncInfoTable, FuncLocMap, FuncMap},
+            file_func_query::{FuncInfo, FuncInfoTable, FuncLocMap, FuncMap},
             for_query::{ForPool, ForSet},
             func_invoc_query::FuncInvocMap,
             if_query::{IfPool, IfSet},
@@ -346,12 +346,18 @@ impl<'a> SrcForestBuilder<'a> {
                     cur_entry,
                     func_invoc_map,
                     stmt_scope_map,
+                    cur_entry,
                 ))
             }
         }
     }
 
-    pub fn build_tree(&self, file_path: &Path, func_name: &str) -> Result<Option<FuncSrcTree>> {
+    pub fn build_tree(
+        &self,
+        file_path: &Path,
+        func_info: &FuncInfo,
+    ) -> Result<Option<FuncSrcTree>> {
+        let func_name = &func_info.name;
         let block_map_op = self.proj_info.block_pool.get_value(func_name);
         let if_set_op = self.proj_info.if_pool.get_value(func_name);
         let switch_map_op = self.proj_info.switch_pool.get_value(func_name);
@@ -389,6 +395,7 @@ impl<'a> SrcForestBuilder<'a> {
             root_ptr,
             func_name,
             &self.proj_info.func_scope_map,
+            func_info.ret_type.clone(),
         )))
     }
 
@@ -396,7 +403,7 @@ impl<'a> SrcForestBuilder<'a> {
         let mut forest = FuncTable::new();
         for (file_path, func_invo_vec) in &self.proj_info.func_info_table {
             for func_info in func_invo_vec {
-                let tree_op = self.build_tree(file_path, &func_info.name)?;
+                let tree_op = self.build_tree(file_path, &func_info)?;
                 let tree = match tree_op {
                     Some(t) => t,
                     None => continue,

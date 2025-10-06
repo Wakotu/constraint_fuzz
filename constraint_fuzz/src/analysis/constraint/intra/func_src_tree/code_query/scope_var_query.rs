@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use color_eyre::eyre::Result;
 use eyre::bail;
@@ -7,7 +7,8 @@ use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{custom_class_query::VarType, CodeQLRunner},
-    stmts::{LocParseError, QLLoc},
+    nodes::SharedStmtNodePtr,
+    stmts::{LocParseError, LocTypeParseError, QLLoc},
 };
 
 const FUNC_SCOPE_QUERY: &str = "func_scope.ql";
@@ -25,7 +26,7 @@ pub struct FuncScopeRec {
 }
 
 impl FuncScopeRec {
-    pub fn to_entry(&self) -> std::result::Result<FuncScopeEntry, LocParseError> {
+    pub fn to_entry(&self) -> std::result::Result<FuncScopeEntry, LocTypeParseError> {
         // constructs the variable instance
         let var = SrcVar::new(
             &self.var_name,
@@ -49,7 +50,7 @@ pub struct StmtScopeRec {
 }
 
 impl StmtScopeRec {
-    pub fn to_entry(&self) -> std::result::Result<StmtScopeEntry, LocParseError> {
+    pub fn to_entry(&self) -> std::result::Result<StmtScopeEntry, LocTypeParseError> {
         // constructs the variable type instance
         let var = SrcVar::new(
             &self.var_name,
@@ -76,7 +77,7 @@ impl SrcVar {
         var_loc: &str,
         var_type_name: &str,
         var_type_loc: &str,
-    ) -> std::result::Result<Self, LocParseError> {
+    ) -> std::result::Result<Self, LocTypeParseError> {
         let loc = QLLoc::from_str(var_loc)?;
         let var_type = VarType::new(var_type_name, var_type_loc)?;
         Ok(Self {
@@ -84,6 +85,53 @@ impl SrcVar {
             name: var_name.to_owned(),
             var_type,
         })
+    }
+
+    pub fn var_name_str(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn get_live_var(stmt_ptr: SharedStmtNodePtr) -> Vec<SrcVar> {
+        let mut var_set: Vec<SrcVar> = vec![];
+        let mut cur_ptr = stmt_ptr.clone();
+        let mut names_seen: HashSet<String> = HashSet::new();
+        loop {
+            for var in cur_ptr.borrow().valid_var_vec.iter() {
+                if names_seen.contains(&var.name) {
+                    continue;
+                }
+                var_set.push(var.to_owned());
+                names_seen.insert(var.name.to_string());
+            }
+            //
+            let par_ptr = match cur_ptr.borrow().get_parent_ptr() {
+                Some(ptr) => ptr,
+                None => break,
+            };
+            cur_ptr = par_ptr;
+        }
+        var_set
+    }
+
+    pub fn get_live_var_name_map(stmt_ptr: SharedStmtNodePtr) -> HashMap<String, SrcVar> {
+        let mut name_var_map: HashMap<String, SrcVar> = HashMap::new();
+        let mut cur_ptr = stmt_ptr.clone();
+        loop {
+            for var in cur_ptr.borrow().valid_var_vec.iter() {
+                let name = &var.name;
+                name_var_map
+                    .entry(name.to_string())
+                    .or_insert_with(|| var.clone());
+            }
+
+            // get parent ptr
+            let par_ptr = match cur_ptr.borrow().get_parent_ptr() {
+                Some(ptr) => ptr,
+                None => break,
+            };
+            cur_ptr = par_ptr;
+        }
+        name_var_map
     }
 }
 
@@ -99,13 +147,13 @@ impl CodeQLRunner {
             let (func_name, var) = match rec.to_entry() {
                 Ok(entry) => entry,
                 Err(e) => match e {
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!(
                             "Failed to parse location in func_scope query result: {}",
                             msg
                         )
                     }
-                    LocParseError::ValueErr(_) | LocParseError::ZeroErr => {
+                    LocTypeParseError::ValueErr(_) => {
                         continue;
                     }
                 },
@@ -123,13 +171,13 @@ impl CodeQLRunner {
             let (stmt_loc, var_type) = match rec.to_entry() {
                 Ok(entry) => entry,
                 Err(e) => match e {
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!(
                             "Failed to parse location in stmt_scope query result: {}",
                             msg
                         )
                     }
-                    LocParseError::ValueErr(_) | LocParseError::ZeroErr => {
+                    LocTypeParseError::ValueErr(_) => {
                         continue;
                     }
                 },

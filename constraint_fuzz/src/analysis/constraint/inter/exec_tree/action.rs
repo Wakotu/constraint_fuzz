@@ -25,18 +25,17 @@ pub fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
 }
 
 #[derive(Clone)]
+pub struct FuncCallAction {
+    pub func_name: String,
+    pub child_ptr: SharedFuncNodePtr,
+    pub invoc_loc_op: Option<SrcLocEnum>,
+}
+
+#[derive(Clone)]
 pub enum FuncAction {
-    Call {
-        func_name: String,
-        child_ptr: SharedFuncNodePtr,
-        invoc_loc: Option<SrcLocEnum>,
-    },
-    Return {
-        func_name: String,
-    },
-    Unwind {
-        loc: SrcLocEnum,
-    },
+    Call(FuncCallAction),
+    Return { func_name: String },
+    Unwind { loc: SrcLocEnum },
 }
 
 impl FuncAction {
@@ -73,11 +72,7 @@ impl FuncAction {
 impl FuncAction {
     pub fn get_dot_id(&self, cnt: usize) -> String {
         match &self {
-            FuncAction::Call {
-                child_ptr: _,
-                invoc_loc: _,
-                func_name: _,
-            } => format!("Function_Call_Action_{}", cnt),
+            FuncAction::Call(_) => format!("Function_Call_Action_{}", cnt),
             FuncAction::Return { func_name: _ } => format!("Function_Return_Action_{}", cnt),
             FuncAction::Unwind { loc: _ } => format!("Function_Unwind_Action_{}", cnt),
         }
@@ -87,17 +82,13 @@ impl FuncAction {
 impl fmt::Debug for FuncAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            FuncAction::Call {
-                child_ptr,
-                invoc_loc,
-                func_name,
-            } => {
+            FuncAction::Call(func_call_act) => {
                 write!(
                     f,
                     "Call({}) -> Child({:?}) at {:?}",
-                    func_name,
-                    child_ptr.borrow(),
-                    invoc_loc
+                    func_call_act.func_name,
+                    func_call_act.child_ptr.borrow(),
+                    func_call_act.invoc_loc_op
                 )
             }
             FuncAction::Return { func_name } => write!(f, "Return({})", func_name),
@@ -109,11 +100,7 @@ impl fmt::Debug for FuncAction {
 impl FuncAction {
     pub fn get_func_name(&self) -> &str {
         match self {
-            FuncAction::Call {
-                func_name,
-                child_ptr: _,
-                invoc_loc: _,
-            } => func_name,
+            FuncAction::Call(call_act) => &call_act.func_name,
             // actually operation name
             FuncAction::Unwind { loc: _ } => "Unwind",
             FuncAction::Return { func_name } => func_name,
@@ -129,13 +116,8 @@ impl FuncAction {
     }
 
     pub fn get_child_ptr(&self) -> Option<SharedFuncNodePtr> {
-        if let FuncAction::Call {
-            child_ptr,
-            invoc_loc: _,
-            func_name: _,
-        } = self
-        {
-            Some(child_ptr.clone())
+        if let FuncAction::Call(call_act) = self {
+            Some(call_act.child_ptr.clone())
         } else {
             None
         }
@@ -256,15 +238,15 @@ impl fmt::Debug for JumpActionType {
 
 #[derive(Clone)]
 pub struct JumpAction {
-    pub intra_type: JumpActionType,
+    pub jump_variants: JumpActionType,
     pub from_loc: SrcLocEnum,
     cond_val: bool,
-    dest_loc: SrcLocEnum,
+    pub dest_loc: SrcLocEnum,
 }
 
 impl JumpAction {
     fn get_dot_id(&self, cnt: usize) -> String {
-        match self.intra_type {
+        match self.jump_variants {
             JumpActionType::BrGuard { .. } => {
                 format!("Branch_Guard_Action_{}", cnt)
             }
@@ -280,7 +262,7 @@ impl fmt::Debug for JumpAction {
         write!(
             f,
             "{:?} at {:?} with value {} to {:?}",
-            self.intra_type, self.from_loc, self.cond_val, self.dest_loc
+            self.jump_variants, self.from_loc, self.cond_val, self.dest_loc
         )
     }
 }
@@ -321,7 +303,7 @@ impl JumpAction {
         let dest_loc = SrcLocEnum::from_str(dest_loc_str)?;
 
         Ok(Self {
-            intra_type,
+            jump_variants: intra_type,
             from_loc: cond_loc,
             cond_val,
             dest_loc,
@@ -380,7 +362,7 @@ impl JumpAction {
         let dest_loc = SrcLocEnum::from_str(parts[2])?;
 
         Ok(Self {
-            intra_type: act_type,
+            jump_variants: act_type,
             from_loc: cond_loc,
             cond_val,
             dest_loc,
@@ -730,11 +712,7 @@ impl ExecAction {
         match self {
             ExecAction::UBV(ubv_hit) => Some(ubv_hit.get_loc()),
             ExecAction::Func(func_act) => match &func_act {
-                FuncAction::Call {
-                    child_ptr: _,
-                    invoc_loc,
-                    func_name: _,
-                } => invoc_loc.as_ref(),
+                FuncAction::Call(call_act) => call_act.invoc_loc_op.as_ref(),
                 FuncAction::Return { .. } => None,
                 FuncAction::Unwind { loc } => Some(loc),
             },
@@ -749,15 +727,11 @@ impl ExecAction {
         match self {
             ExecAction::UBV(_) => true,
             ExecAction::Func(func_act) => match func_act {
-                FuncAction::Call {
-                    child_ptr: _,
-                    invoc_loc: _,
-                    func_name: _,
-                } => true,
+                FuncAction::Call(_) => true,
                 FuncAction::Return { .. } => false,
                 FuncAction::Unwind { .. } => false,
             },
-            ExecAction::Intra(jump_act) => match jump_act.intra_type {
+            ExecAction::Intra(jump_act) => match jump_act.jump_variants {
                 JumpActionType::BrGuard { .. } => true,
                 JumpActionType::MergeBrGuard => true,
                 JumpActionType::SwitchGuard => false,

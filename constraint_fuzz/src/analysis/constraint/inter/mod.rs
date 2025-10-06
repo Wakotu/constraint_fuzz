@@ -128,7 +128,7 @@ mod tests {
 
     use crate::{
         analysis::constraint::{
-            inter::exec_tree::{ExecForest, ExecForestBuilder},
+            inter::exec_tree::ExecForest,
             intra::func_src_tree::{builder::ProjectInfo, code_query::CodeQLRunner},
         },
         deopt::utils::{get_file_lineno, timer_it},
@@ -228,12 +228,8 @@ mod tests {
 
         let guard_dir = "/struct_fuzz/constraint_fuzz/output/build/libaom/expe/example_fuzzer-2025-08-14 11:39:06/exec_recs/guards/0ae2706207b8f8ea054bf44e755a6f4e";
 
-        let runner = CodeQLRunner::new();
-        let proj_info = ProjectInfo::from_codeql_runner(&runner)?;
-        let builder = ExecForestBuilder::new(&proj_info);
-
         let exec_forest = timer_it(
-            || builder.from_guard_dir(guard_dir),
+            || ExecForest::from_guard_dir(guard_dir),
             "Guard Directory Parsing",
         )?;
 

@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{CodeQLRunner, FuncTable},
-    stmts::{IfStmt, LocParseError, QLLoc, StmtType},
+    stmts::{IfStmt, LocParseError, LocTypeParseError, QLLoc, StmtType},
 };
 
 const IF_QUERY_NAME: &str = "if_query.ql";
@@ -58,15 +58,11 @@ impl CodeQLRunner {
             let if_stmt = match IfStmt::from_if_else_record(if_record, &else_map) {
                 Ok(s) => s,
                 Err(e) => match e {
-                    LocParseError::ValueErr(msg) => {
+                    LocTypeParseError::ValueErr(msg) => {
                         log::warn!("Warning: Skipping IfStmt due to value error: {}", msg);
                         continue;
                     }
-                    LocParseError::ZeroErr => {
-                        log::warn!("Warning: Skipping IfStmt due to zero loc");
-                        continue;
-                    }
-                    LocParseError::FormatErr(msg) => {
+                    LocTypeParseError::FormatErr(msg) => {
                         bail!("Error: Failed to parse IfStmt due to format error: {}", msg)
                     }
                 },

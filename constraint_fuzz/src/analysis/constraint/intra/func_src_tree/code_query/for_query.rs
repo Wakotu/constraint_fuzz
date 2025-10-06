@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::{CodeQLRunner, FuncTable},
-    stmts::{ForStmt, LocParseError},
+    stmts::{ForStmt, LocParseError, LocTypeParseError},
 };
 
 const FOR_QUERY_NAME: &str = "for_stmt.ql";
@@ -82,21 +82,14 @@ impl CodeQLRunner {
                 match ForStmt::from_for_record_and_maps(&rec, &init_map, &cond_map, &update_map) {
                     Ok(s) => s,
                     Err(e) => match e {
-                        LocParseError::FormatErr(msg) => {
+                        LocTypeParseError::FormatErr(msg) => {
                             bail!("Error parsing ForStmt record at loc {}: {}", rec.loc, msg);
                         }
-                        LocParseError::ValueErr(msg) => {
+                        LocTypeParseError::ValueErr(msg) => {
                             log::warn!(
                                 "Warning: Skipping ForStmt record at loc {}: {}",
                                 rec.loc,
                                 msg
-                            );
-                            continue;
-                        }
-                        LocParseError::ZeroErr => {
-                            log::warn!(
-                                "Warning: Skipping ForStmt record at loc {} due to zero loc",
-                                rec.loc
                             );
                             continue;
                         }

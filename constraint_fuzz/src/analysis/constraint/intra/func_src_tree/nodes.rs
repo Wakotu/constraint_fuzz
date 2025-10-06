@@ -21,13 +21,18 @@ use crate::analysis::constraint::{
     },
     intra::func_src_tree::{
         code_query::{
+            custom_class_query::VarType,
             func_invoc_query::{FuncInvoc, FuncInvocMap},
             scope_var_query::{FuncScopeMap, SrcVar, StmtScopeMap},
             switch_query::CaseMap,
         },
         nodes::cf_mod::{CFStruct, CasePtrMap},
-        stmts::{BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, QLLoc, SwitchStmt, WhileStmt},
+        stmts::{
+            BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, QLLoc, StmtType, SwitchStmt,
+            WhileStmt,
+        },
     },
+    stmt_collect::ProcessUnit,
 };
 
 pub enum StmtNodeVariants {
@@ -90,6 +95,7 @@ impl StmtNode {
         entry: &ChildEntry,
         func_invoc_map: &FuncInvocMap,
         stmt_scope_map: &StmtScopeMap,
+        cur_entry: &ChildEntry,
         // parent_ptr: WeakStmtNodePtr
     ) -> SharedStmtNodePtr {
         let valid_var_vec = match stmt_scope_map.get(&entry.loc) {
@@ -97,9 +103,10 @@ impl StmtNode {
             Some(var_vec) => var_vec.clone(),
         };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::Plain(PlainStmtNode::from_loc_and_invocs(
+            variants: StmtNodeVariants::Plain(PlainStmtNode::new(
                 &entry.loc,
                 func_invoc_map,
+                &cur_entry.stmt_type,
             )),
             parent_ptr_op: None,
             parent_idx_op: None,
@@ -248,51 +255,101 @@ pub type WeakStmtNodePtr = Weak<RefCell<StmtNode>>;
 
 #[derive(EquivByLoc, Clone)]
 pub struct PlainStmtNode {
-    loc: QLLoc,
+    pub loc: QLLoc,
     func_invoc_vec: Vec<FuncInvoc>,
+    pub stmt_type: StmtType,
 }
 
 impl PlainStmtNode {
-    pub fn from_loc_and_invocs(loc: &QLLoc, func_invoc_map: &FuncInvocMap) -> Self {
+    pub fn new(loc: &QLLoc, func_invoc_map: &FuncInvocMap, stmt_type: &StmtType) -> Self {
         let invoc_vec = SrcExpr::get_invoc_by_loc(loc, func_invoc_map);
 
         Self {
             loc: loc.clone(),
             func_invoc_vec: invoc_vec,
+            stmt_type: stmt_type.clone(),
         }
     }
 
-    pub fn compare_src_loc(&self, src_loc: &SrcLocEnum) -> Option<Ordering> {
-        match self.loc.compare_src_loc(src_loc) {
-            Some(ord) => Some(ord),
-            None => {
-                log::warn!(
-                    "Function Unwind Action location is not comparable with statement location"
-                );
-                None
+    pub fn get_return_expr(&self) -> Result<Option<String>> {
+        match self.stmt_type {
+            StmtType::Return => {
+                let content = self.loc.get_content()?;
+                let start_idx = "return ".len();
+                // get rid of starting "return " and ending ";"
+                Ok(Some(
+                    content[start_idx..content.len() - 1].trim().to_string(),
+                ))
             }
+            _ => Ok(None),
         }
     }
 
-    fn match_act_loc_impl(&self, act: &ExecAction) -> bool {
-        let act_loc = match act.get_match_loc() {
-            None => return false,
-            Some(loc) => loc,
-        };
-        let loc_ord = match self.compare_src_loc(act_loc) {
-            None => return false,
-            Some(o) => o,
-        };
-        loc_ord == Ordering::Equal
+    fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
+        match self.loc.compare_src_loc(src_loc) {
+            None => false,
+            Some(ord) => ord == Ordering::Equal,
+        }
     }
 
-    pub fn match_act_loc(&self, act: &ExecAction) -> Result<bool> {
-        let act_match = self.match_act_loc_impl(act);
-        if act_match && !act.plain_stmt_suitable() {
-            bail!("Statement-Action location match, but action type is not suitable for plain statement");
+    pub fn action_inner(&self, act: &ExecAction) -> Result<bool> {
+        match act {
+            ExecAction::Intra(jump_act) => {
+                if !self.src_loc_inner(&jump_act.from_loc) && self.src_loc_inner(&jump_act.dest_loc)
+                {
+                    return Ok(false);
+                }
+
+                match &jump_act.jump_variants {
+                    JumpActionType::BrGuard { val_loc } => {
+                        let flag = self.src_loc_inner(val_loc);
+                        if !flag {
+                            bail!("Stmt action inner check: br guard value should match but actually not");
+                        }
+                        Ok(true)
+                    }
+                    JumpActionType::MergeBrGuard => Ok(true),
+                    var => {
+                        bail!(
+                            "Stmt action inner check: Unsupported jump action type: {:?}",
+                            var
+                        )
+                    }
+                }
+            }
+            ExecAction::UBV(ubv_hit) => Ok(self.src_loc_inner(ubv_hit.get_loc())),
+            ExecAction::Func(FuncAction::Call(call_act)) => {
+                match &call_act.invoc_loc_op {
+                    None => {
+                        log::warn!("Stmt action inner check: Function call action without invocation location");
+                        Ok(false)
+                    }
+                    Some(loc) => Ok(self.src_loc_inner(loc)),
+                }
+            }
+            _ => Ok(false),
         }
-        Ok(act_match)
     }
+
+    // fn match_act_loc_impl(&self, act: &ExecAction) -> bool {
+    //     let act_loc = match act.get_match_loc() {
+    //         None => return false,
+    //         Some(loc) => loc,
+    //     };
+    //     let loc_ord = match self.loc.compare_src_loc(act_loc) {
+    //         None => return false,
+    //         Some(o) => o,
+    //     };
+    //     loc_ord == Ordering::Equal
+    // }
+
+    // pub fn match_act_loc(&self, act: &ExecAction) -> Result<bool> {
+    //     let act_match = self.match_act_loc_impl(act);
+    //     if act_match && !act.plain_stmt_suitable() {
+    //         bail!("Statement-Action location match, but action type is not suitable for plain statement");
+    //     }
+    //     Ok(act_match)
+    // }
 }
 
 #[derive(EquivByLoc)]
@@ -372,13 +429,20 @@ pub mod cf_mod {
 pub struct FuncSrcTree {
     root: SharedStmtNodePtr,
     valid_var_vec: Vec<SrcVar>,
+    pub ret_type: VarType,
+    pub func_name: String,
 }
 
 impl FuncSrcTree {
     pub fn get_formal_param_vec(&self) -> &Vec<SrcVar> {
         &self.valid_var_vec
     }
-    pub fn new(root: SharedStmtNodePtr, name: &str, func_scope_map: &FuncScopeMap) -> Self {
+    pub fn new(
+        root: SharedStmtNodePtr,
+        name: &str,
+        func_scope_map: &FuncScopeMap,
+        ret_type: VarType,
+    ) -> Self {
         let valid_var_vec = match func_scope_map.get(name) {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
@@ -386,6 +450,8 @@ impl FuncSrcTree {
         Self {
             root,
             valid_var_vec,
+            ret_type,
+            func_name: name.to_string(),
         }
     }
 

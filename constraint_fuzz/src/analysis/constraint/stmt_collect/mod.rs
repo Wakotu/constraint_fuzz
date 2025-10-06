@@ -1,24 +1,32 @@
-use std::{collections::HashSet, hash::Hash};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+};
+
+pub mod inner_stmt;
 
 use crate::{
     analysis::constraint::{
         inter::{
             exec_tree::{
                 action::{ExecAction, FuncAction, LoopAction, RecurAction},
-                thread_tree::SharedFuncNodePtr,
+                thread_tree::{ExecFuncNode, SharedFuncNodePtr},
                 ExecForest,
             },
             loc::SrcLocEnum,
         },
         intra::func_src_tree::{
             builder::FuncSrcForest,
-            code_query::scope_var_query::SrcVar,
+            code_query::{custom_class_query::VarType, scope_var_query::SrcVar},
             nodes::{FuncSrcTree, PlainStmtNode, SharedStmtNodePtr, StmtNodeVariants},
+            stmts::QLLoc,
         },
+        stmt_collect::inner_stmt::{InnerStmtHandler, InvocSubstOpr},
     },
     feedback::branches::constraints::UBConstraint,
 };
 
+use chrono::format::format;
 use clap::builder::Str;
 use color_eyre::eyre::Result;
 use eyre::bail;
@@ -40,9 +48,16 @@ pub enum ProcessUnitVariant {
     CondExpr(CondExprUnit),
 }
 
+pub struct InnerCFInfo {
+    pub from_loc: usize,
+    pub dest_loc: usize,
+}
+
 pub struct ProcessUnit {
     content: String,
     valid_var_vec: Vec<SrcVar>,
+    // TODO: to be added
+    // inner_cf_vec: Vec<InnerCFInfo>,
     variants: ProcessUnitVariant,
 }
 
@@ -51,7 +66,7 @@ impl ProcessUnit {
      * Construction Related
      */
 
-    pub fn create_plain_pu(content: &str, valid_var_vec: Vec<SrcVar>) -> Self {
+    pub fn create_plain_pu(content: String, valid_var_vec: Vec<SrcVar>) -> Self {
         Self {
             content: content.to_string(),
             valid_var_vec,
@@ -59,26 +74,19 @@ impl ProcessUnit {
         }
     }
 
-    pub fn get_live_var(stmt_ptr: SharedStmtNodePtr) -> HashSet<SrcVar> {
-        let mut var_set: HashSet<SrcVar> = HashSet::new();
-        let mut cur_ptr = stmt_ptr.clone();
-        let mut names_seen: HashSet<String> = HashSet::new();
-        loop {
-            for var in cur_ptr.borrow().valid_var_vec.iter() {
-                if names_seen.contains(&var.name) {
-                    continue;
-                }
-                var_set.insert(var.to_owned());
-                names_seen.insert(var.name.to_string());
-            }
-
-            let par_ptr = match cur_ptr.borrow().get_parent_ptr() {
-                Some(ptr) => ptr,
-                None => break,
-            };
-            cur_ptr = par_ptr;
+    pub fn create_ret_assign_pu(
+        ret_expr: &str,
+        ret_var: &SrcVar,
+        ret_stmt_ptr: SharedStmtNodePtr,
+    ) -> Self {
+        let content = format!("{} = {};", ret_var.name, ret_expr);
+        let mut valid_var_vec = SrcVar::get_live_var(ret_stmt_ptr);
+        valid_var_vec.push(ret_var.clone());
+        Self {
+            content,
+            valid_var_vec,
+            variants: ProcessUnitVariant::Plain {},
         }
-        var_set
     }
 }
 
@@ -126,102 +134,213 @@ impl<'a> StmtCollector<'a> {
         loop_act.is_loop_entry() && Self::is_inside_loop(stmt_ptr)
     }
 
-    fn construct_func_prior_stmts(
-        &self,
-        stmt_ptr: SharedStmtNodePtr,
-        func_name: &str,
-        invoc_loc_op: Option<&SrcLocEnum>,
-    ) -> Result<Vec<ProcessUnit>> {
-        // get func invoc loc
-        let stmt_node = stmt_ptr.borrow();
-        let stmt_loc = stmt_node.get_loc();
-        let (stmt_str, invoc_idx_op) = stmt_loc.get_content_with_inner(invoc_loc_op)?;
-        let invoc_idx = match invoc_idx_op {
-            Some(idx) => idx,
-            None => stmt_str
-                .find(func_name)
-                .expect("Failed to find function name in statement"),
-        };
+    /**
+     * Returns (start_idx, left_idx, end_idx)
+     */
+    // fn get_subst_idx_and_len(
+    //     stmt_ptr: SharedStmtNodePtr,
+    //     func_name: &str,
+    //     invoc_loc_op: Option<&SrcLocEnum>,
+    // ) -> Result<(usize, usize, usize, String)> {
+    //     let stmt_node = stmt_ptr.borrow();
+    //     let stmt_loc = stmt_node.get_loc();
+    //     let (stmt_str, invoc_idx_op) = stmt_loc.get_content_with_loc_conversion(invoc_loc_op)?;
+    //     let invoc_idx = match invoc_idx_op {
+    //         Some(idx) => idx,
+    //         // fallback invoc_loc searching method
+    //         None => stmt_str
+    //             .find(func_name)
+    //             .expect("Failed to find function name in statement"),
+    //     };
 
-        // get actual parameter names
-        let mut idx = invoc_idx + func_name.len();
-        while idx < stmt_str.len() && stmt_str.as_bytes()[idx].is_ascii_whitespace() {
-            idx += 1;
+    //     let mut idx = invoc_idx + func_name.len();
+    //     while idx < stmt_str.len() && stmt_str.as_bytes()[idx].is_ascii_whitespace() {
+    //         idx += 1;
+    //     }
+    //     assert!(stmt_str.as_bytes()[idx] == b'(');
+    //     let left_idx = idx;
+    //     idx += 1;
+    //     let param_part = &stmt_str[idx..];
+    //     let right_idx = param_part
+    //         .find(')')
+    //         .expect("Failed to find closing parenthesis for function parameters");
+
+    //     Ok((invoc_idx, left_idx, right_idx, stmt_str))
+    // }
+
+    /// Construct assignment statements for function parameters before function invocation
+    // fn construct_func_prior_stmts(
+    //     &self,
+    //     stmt_ptr: SharedStmtNodePtr,
+    //     stmt_str: &str,
+    //     func_name: &str,
+    //     // (left_idx, right_idx) -> FuncInvoc Action
+    //     left_idx: usize,
+    //     right_idx: usize,
+    //     // invoc_loc_op: Option<&SrcLocEnum>,
+    // ) -> Result<Vec<ProcessUnit>> {
+    //     let param_part = &stmt_str[left_idx + 1..right_idx];
+    //     let param_name_vec: Vec<&str> = param_part.split(',').map(|s| s.trim()).collect();
+
+    //     // let live_var_vec = ProcessUnit::get_live_var(stmt_ptr.clone());
+    //     let live_var_name_map = SrcVar::get_live_var_name_map(stmt_ptr.clone());
+
+    //     let mut param_var_vec: Vec<SrcVar> = vec![];
+    //     for param_name in param_name_vec.iter() {
+    //         let param_var_op = live_var_name_map.get(&param_name.to_string());
+    //         if let Some(param_var) = param_var_op {
+    //             param_var_vec.push(param_var.clone());
+    //         } else {
+    //             bail!(
+    //                 "Failed to find parameter variable: {} in live variables",
+    //                 param_name
+    //             );
+    //         }
+    //     }
+
+    //     // get formal parameter
+    //     let called_func_tree = self.get_src_func_tree(func_name)?;
+    //     let arg_var_vec = called_func_tree.get_formal_param_vec();
+
+    //     assert!(param_var_vec.len() == arg_var_vec.len());
+
+    //     // construct assignment statements for each param-arg pair
+    //     let mut pu_vec: Vec<ProcessUnit> = vec![];
+    //     for (param_var, arg_var) in param_var_vec.iter().zip(arg_var_vec.iter()) {
+    //         assert!(
+    //             param_var.var_type == arg_var.var_type,
+    //             "Parameter and argument variable types do not match: {:?} vs {:?}",
+    //             param_var.var_type,
+    //             arg_var.var_type
+    //         );
+    //         let content = format!("{} = {};", param_var.name, arg_var.name);
+    //         pu_vec.push(ProcessUnit::create_plain_pu(
+    //             content,
+    //             vec![arg_var.clone(), param_var.clone()],
+    //         ));
+    //     }
+
+    //     Ok(pu_vec)
+    // }
+
+    // fn func_invoc_handle(
+    //     &self,
+    //     stmt_ptr: SharedStmtNodePtr,
+    //     func_name: &str,
+    //     called_func_node_ptr: SharedFuncNodePtr,
+    //     invoc_loc_op: Option<&SrcLocEnum>,
+    //     pu_vec: &mut Vec<ProcessUnit>,
+    // ) -> Result<Option<FuncInvocRes>> {
+    //     // prior
+    //     let (start_idx, left_idx, right_idx, stmt_str) =
+    //         Self::get_subst_idx_and_len(stmt_ptr.clone(), func_name, invoc_loc_op)?;
+    //     let prior_stmt_vec =
+    //         self.construct_func_prior_stmts(stmt_ptr, &stmt_str, func_name, left_idx, right_idx)?;
+    //     pu_vec.extend(prior_stmt_vec);
+
+    //     // call
+    //     let called_func_tree = self.get_src_func_tree(func_name)?;
+    //     let (func_pu_vec, ret_var_op) =
+    //         self.collect_intra(called_func_tree, called_func_node_ptr)?;
+    //     pu_vec.extend(func_pu_vec);
+
+    //     match ret_var_op {
+    //         None => Ok(None),
+    //         Some(ret_var) => {
+    //             let subst_str = ret_var.var_name_str();
+    //             let opr = InvocSubstOpr {
+    //                 start_idx,
+    //                 end_idx: right_idx,
+    //                 subst_str,
+    //             };
+    //             Ok(Some(FuncInvocRes { opr, ret_var }))
+    //         }
+    //     }
+    // }
+
+    fn create_ret_var(src_tree: &FuncSrcTree, ret_loc: QLLoc) -> Option<SrcVar> {
+        if src_tree.ret_type.is_void() {
+            return None;
         }
-        assert!(stmt_str.as_bytes()[idx] == b'(');
-        idx += 1;
-        let param_part = &stmt_str[idx..];
-        let right_idx = param_part
-            .find(')')
-            .expect("Failed to find closing parenthesis for function parameters");
-        let param_part = &param_part[..right_idx];
-        let param_name_vec: Vec<&str> = param_part.split(',').map(|s| s.trim()).collect();
-
-        let live_var_vec = ProcessUnit::get_live_var(stmt_ptr.clone());
-
-        let mut param_var_vec: Vec<SrcVar> = vec![];
-        for param_name in param_name_vec.iter() {
-            let param_var_op = live_var_vec
-                .iter()
-                .find(|var| var.name == *param_name)
-                .cloned();
-            if let Some(param_var) = param_var_op {
-                param_var_vec.push(param_var);
-            } else {
-                bail!(
-                    "Failed to find parameter variable: {} in live variables",
-                    param_name
-                );
-            }
-        }
-
-        // get formal parameter
-        let called_func_tree = self.get_src_func_tree(func_name)?;
-        let arg_var_vec = called_func_tree.get_formal_param_vec();
-
-        assert!(param_var_vec.len() == arg_var_vec.len());
-
-        // construct assignment statements for each param-arg pair
-        let mut pu_vec: Vec<ProcessUnit> = vec![];
-        for (param_var, arg_var) in param_var_vec.iter().zip(arg_var_vec.iter()) {
-            assert!(
-                param_var.var_type == arg_var.var_type,
-                "Parameter and argument variable types do not match: {:?} vs {:?}",
-                param_var.var_type,
-                arg_var.var_type
-            );
-        }
-
-        todo!()
+        Some(SrcVar {
+            loc: ret_loc,
+            name: format!("{}_ret", src_tree.func_name),
+            var_type: src_tree.ret_type.clone(),
+        })
     }
 
-    // to be declared
-    fn construct_func_after_stmts() {}
+    // fn stmt_handle_one_inner_act(
+    //     &self,
+    //     plain_stmt: &PlainStmtNode,
+    //     stmt_ptr: SharedStmtNodePtr,
+    //     func_node: &ExecFuncNode,
+    //     pu_vec: &mut Vec<ProcessUnit>,
+    //     act: &ExecAction,
+    //     ret_var_vec: &mut Vec<SrcVar>,
+    // ) -> Result<()> {
+    //     match act {
+    //         // handle func invocation
+    //         ExecAction::Func(func_act) => match func_act {
+    //             FuncAction::Call {
+    //                 func_name,
+    //                 child_ptr,
+    //                 invoc_loc_op: invoc_loc,
+    //             } => {
+    //                 let invoc_res_op = self.func_invoc_handle(
+    //                     stmt_ptr.clone(),
+    //                     func_name,
+    //                     child_ptr.clone(),
+    //                     invoc_loc.as_ref(),
+    //                     pu_vec,
+    //                 )?;
+    //                 match invoc_res_op {
+    //                     None => {}
+    //                     Some(invoc_res) => {
+    //                         todo!()
+    //                     }
+    //                 }
+    //                 todo!()
+    //             }
+    //             FuncAction::Unwind { loc } => {
+    //                 todo!()
+    //             }
+    //             _ => {
+    //                 bail!("Unexpected Func action: {:?}", func_act);
+    //             }
+    //         },
 
-    fn func_invoc_handle(
+    //         _ => {
+    //             bail!("Stmt Action handle: Unexpected actions")
+    //         }
+    //     }
+    // }
+
+    fn stmt_handle_inner_actions(
         &self,
+        plain_stmt: &PlainStmtNode,
         stmt_ptr: SharedStmtNodePtr,
-        func_name: &str,
-        child_ptr: SharedFuncNodePtr,
-        invoc_loc_op: Option<&SrcLocEnum>,
+        func_node: &ExecFuncNode,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<SrcVar> {
-        // prior
-        let prior_stmt_vec = self.construct_func_prior_stmts(stmt_ptr, func_name, invoc_loc_op)?;
-        pu_vec.extend(prior_stmt_vec);
+        act_idx: &mut usize,
+    ) -> Result<()> {
+        let mut act = func_node.get_act_at_res(*act_idx)?;
 
-        // call
-
-        // after
-
-        todo!()
+        let mut handler = InnerStmtHandler::new(stmt_ptr.clone(), self)?;
+        while plain_stmt.action_inner(act)? {
+            handler.act_handle(act)?;
+            // act move forward
+            *act_idx += 1;
+            act = func_node.get_act_at_res(*act_idx)?;
+        }
+        handler.update_pu(pu_vec);
+        Ok(())
     }
 
     fn collect_intra(
         &self,
         src_tree: &FuncSrcTree,
         exec_node_ptr: SharedFuncNodePtr,
-    ) -> Result<Vec<ProcessUnit>> {
+    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>)> {
         let exec_func = exec_node_ptr.borrow();
         let mut act_idx: usize = 0;
 
@@ -240,7 +359,7 @@ impl<'a> StmtCollector<'a> {
                 matches!(second_act, ExecAction::Recur(RecurAction::Released)),
                 "Second Action should be Recur Released action"
             );
-            return Ok(vec![]);
+            return Ok((vec![], None));
         }
 
         let mut pu_vec: Vec<ProcessUnit> = vec![];
@@ -256,7 +375,6 @@ impl<'a> StmtCollector<'a> {
                 None => break,
             };
             let stmt_node = stmt_ptr.borrow();
-            let mut act = func_node.get_act_at_res(act_idx)?;
 
             match &stmt_node.variants {
                 StmtNodeVariants::Block(_) => continue,
@@ -266,44 +384,36 @@ impl<'a> StmtCollector<'a> {
                 StmtNodeVariants::Plain(plain_stmt) => {
                     // handle function imigrate and plain string collection.
 
-                    // use new action match and sync algorithm
-
-                    let mut ret_var_vec: Vec<SrcVar> = vec![];
-                    while plain_stmt.match_act_loc(act)? {
-                        act_idx += 1;
-                        match act {
-                            ExecAction::Func(func_act) => match func_act {
-                                FuncAction::Call {
-                                    func_name,
-                                    child_ptr,
-                                    invoc_loc,
-                                } => {
-                                    let ret_var = self.func_invoc_handle(
-                                        stmt_ptr.clone(),
-                                        func_name,
-                                        child_ptr.clone(),
-                                        invoc_loc.as_ref(),
-                                        &mut pu_vec,
-                                    )?;
-                                    ret_var_vec.push(ret_var);
-                                }
-                                FuncAction::Unwind { loc } => {
-                                    todo!()
-                                }
-                                _ => {
-                                    bail!("Unexpected Func action: {:?}", func_act);
-                                }
-                            },
-                            // do nothing for the non-func-call action
-                            _ => {}
+                    // handle return stmt
+                    let ret_expr_op = plain_stmt.get_return_expr()?;
+                    if let Some(ret_expr) = ret_expr_op {
+                        let ret_var_op = Self::create_ret_var(src_tree, plain_stmt.loc.clone());
+                        match ret_var_op {
+                            None => {}
+                            Some(ref ret_var) => {
+                                let ret_assign_pu = ProcessUnit::create_ret_assign_pu(
+                                    &ret_expr,
+                                    &ret_var,
+                                    stmt_ptr.clone(),
+                                );
+                                pu_vec.push(ret_assign_pu);
+                            }
                         }
-                        act = func_node.get_act_at_res(act_idx)?;
+                        return Ok((pu_vec, ret_var_op));
                     }
+
+                    self.stmt_handle_inner_actions(
+                        plain_stmt,
+                        stmt_ptr.clone(),
+                        &func_node,
+                        &mut pu_vec,
+                        &mut act_idx,
+                    )?;
                 }
             }
         }
 
-        Ok(pu_vec)
+        Ok((pu_vec, None))
     }
 
     fn get_src_func_tree(&self, func_name: &str) -> Result<&FuncSrcTree> {
@@ -344,7 +454,8 @@ impl<'a> StmtCollector<'a> {
         let src_tree = self.get_src_func_tree(func_name)?;
         drop(func_node);
 
-        self.collect_intra(src_tree, func_node_ptr)
+        let (pu_vec, _) = self.collect_intra(src_tree, func_node_ptr)?;
+        Ok(pu_vec)
     }
 
     pub fn collect(&self) -> Result<Vec<ProcessUnit>> {

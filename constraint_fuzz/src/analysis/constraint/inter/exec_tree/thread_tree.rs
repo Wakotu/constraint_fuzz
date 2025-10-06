@@ -17,7 +17,8 @@ use tokio::join;
 
 use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
-    get_prefix, ExecAction, FuncAction, JumpAction, LoopAction, RecurAction, ThreadAction,
+    get_prefix, ExecAction, FuncAction, FuncCallAction, JumpAction, LoopAction, RecurAction,
+    ThreadAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
 use crate::analysis::constraint::inter::loc::SrcLocEnum;
@@ -269,6 +270,7 @@ impl ExecFuncNode {
 #[derive(Clone)]
 pub struct UBVHit {
     loc: SrcLocEnum,
+    val: bool,
 }
 
 impl fmt::Debug for UBVHit {
@@ -290,15 +292,29 @@ impl UBVHit {
     }
     pub fn parse_value_guard(line: &str) -> std::result::Result<UBVHit, GuardParseError> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
-        let loc = SrcLocEnum::parse_line_with_prefix(line, VAL_PREFIX)?;
+        if !line.starts_with(VAL_PREFIX) {
+            return Err(GuardParseError::PrefixError {
+                data: eyre::eyre!("UBV Hit Parse: prefix doesn't match"),
+            });
+        }
 
-        Ok(UBVHit { loc })
-    }
+        let content = &line[VAL_PREFIX.len()..].trim();
+        let seg_vec: Vec<&str> = line.split_whitespace().collect();
+        assert!(seg_vec.len() == 2, "UBV Hit Parse: segment length is not 2");
+        let loc = SrcLocEnum::from_str(seg_vec[0])?;
 
-    pub fn from_str(slice: &str) -> Result<Self> {
-        // example: /path/to/file.c:123:45
-        let loc = SrcLocEnum::from_str(slice)?;
-        Ok(UBVHit { loc })
+        let val_str = seg_vec[1];
+        let val = match val_str {
+            "0" => false,
+            "1" => true,
+            _ => {
+                return Err(GuardParseError::as_parse_err(eyre::eyre!(
+                    "UBV Hit Parse: invalid val string"
+                )))
+            }
+        };
+
+        Ok(UBVHit { loc, val })
     }
 }
 // pub type FuncBrStack = Vec<FuncEntry>;
@@ -482,11 +498,11 @@ impl ThreadExecTree {
         //     invoc_loc: invoc_loc_op,
         // };
 
-        let func_act = FuncAction::Call {
+        let func_act = FuncAction::Call(FuncCallAction {
             func_name: func_name,
             child_ptr: child_ptr,
-            invoc_loc: invoc_loc_op,
-        };
+            invoc_loc_op,
+        });
         return Ok(func_act);
     }
 
@@ -509,11 +525,11 @@ impl ThreadExecTree {
             }
             SrcLocEnum::Valid(valid_loc) => {
                 // sorted func info vec
-                let func_info_vec = match func_info_table.get(&valid_loc.fpath) {
+                let func_info_vec = match func_info_table.get(&valid_loc.file_path) {
                     None => {
                         log::warn!(
                             "File path not found in function info table: {:?}",
-                            valid_loc.fpath
+                            valid_loc.file_path
                         );
                         return None;
                     }
@@ -654,12 +670,8 @@ impl ThreadExecTree {
             // update context information in case of function actions: current pointer and depth
             if let ExecAction::Func(func_act) = act {
                 match func_act {
-                    FuncAction::Call {
-                        func_name: _,
-                        child_ptr,
-                        invoc_loc: _,
-                    } => {
-                        self.cur_node_ptr = child_ptr;
+                    FuncAction::Call(call_act) => {
+                        self.cur_node_ptr = call_act.child_ptr;
                         self.cur_depth += 1;
                         if self.cur_depth > self.max_depth {
                             self.max_depth = self.cur_depth;

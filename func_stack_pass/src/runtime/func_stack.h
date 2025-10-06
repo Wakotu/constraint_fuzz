@@ -17,6 +17,8 @@ void loop_end(const char *loop_loc, const char *out_loc);
 
 void thread_rec(const char *loc, void *tid_ptr);
 
+void ubv_rec(const char *loc, bool val);
+
 #ifdef __cplusplus
 }
 #endif

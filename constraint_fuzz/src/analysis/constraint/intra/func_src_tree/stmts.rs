@@ -27,10 +27,10 @@ use crate::{
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct QLLoc {
     pub file_path: PathBuf,
-    start_line: usize,
-    start_column: usize,
-    end_line: usize,
-    end_column: usize,
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
 }
 
 impl QLLoc {
@@ -38,7 +38,7 @@ impl QLLoc {
      * File IO related
      *  */
 
-    fn loc_line_match(inner_loc: &Option<&SrcLocEnum>, line_num: usize) -> bool {
+    pub fn loc_line_match(inner_loc: &Option<&SrcLocEnum>, line_num: usize) -> bool {
         match inner_loc {
             None => false,
             Some(src_loc) => match src_loc {
@@ -100,7 +100,7 @@ impl QLLoc {
         Ok((content, idx_op))
     }
 
-    pub fn get_content_with_inner(
+    pub fn get_content_with_loc_conversion(
         &self,
         inner_loc: Option<&SrcLocEnum>,
     ) -> Result<(String, Option<usize>)> {
@@ -128,8 +128,11 @@ impl QLLoc {
     /// compare with src loc that are in the same file_path
     pub fn compare_src_loc(&self, src_loc: &SrcLocEnum) -> Option<Ordering> {
         match src_loc {
-            SrcLocEnum::NullLoc => None,
-            SrcLocEnum::Valid(valid_loc) => match self.file_path.cmp(&valid_loc.fpath) {
+            SrcLocEnum::NullLoc => {
+                log::warn!("Compare QLLoc with an invalid SrcLoc");
+                None
+            }
+            SrcLocEnum::Valid(valid_loc) => match self.file_path.cmp(&valid_loc.file_path) {
                 Ordering::Equal => {
                     if self.start_line > valid_loc.line
                         || (self.start_line == valid_loc.line && self.start_column > valid_loc.col)
@@ -148,7 +151,7 @@ impl QLLoc {
                     log::warn!(
                         "Comparing QL ans Src locations from different files: {} and {}",
                         self.file_path.display(),
-                        valid_loc.fpath.display()
+                        valid_loc.file_path.display()
                     );
                     Some(ord)
                 }
@@ -161,6 +164,23 @@ pub enum LocParseError {
     FormatErr(String),
     ValueErr(String),
     ZeroErr,
+}
+
+pub enum LocTypeParseError {
+    FormatErr(String),
+    ValueErr(String),
+}
+
+impl From<LocParseError> for LocTypeParseError {
+    fn from(err: LocParseError) -> Self {
+        match err {
+            LocParseError::FormatErr(msg) => LocTypeParseError::FormatErr(msg),
+            LocParseError::ValueErr(msg) => LocTypeParseError::ValueErr(msg),
+            LocParseError::ZeroErr => {
+                LocTypeParseError::ValueErr("Location values cannot be zero".to_string())
+            }
+        }
+    }
 }
 
 impl PartialOrd for QLLoc {
@@ -303,7 +323,7 @@ impl QLLoc {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum StmtType {
     If,
     Switch,
@@ -463,13 +483,13 @@ impl IfStmt {
     pub fn from_if_else_record(
         if_record: IfRecord,
         else_map: &ElseRecMap,
-    ) -> std::result::Result<Self, LocParseError> {
+    ) -> std::result::Result<Self, LocTypeParseError> {
         let loc = QLLoc::from_str(&if_record.loc)?;
         let if_type_res = IfType::from_str(&if_record.if_type);
         let if_type = match if_type_res {
             Ok(t) => t,
             Err(e) => {
-                return Err(LocParseError::FormatErr(format!(
+                return Err(LocTypeParseError::FormatErr(format!(
                     "Failed to parse if_type: {}",
                     e
                 )));
@@ -486,7 +506,7 @@ impl IfStmt {
                     &else_record.else_stmt_type,
                 )?)
             } else {
-                return Err(LocParseError::ValueErr(format!(
+                return Err(LocTypeParseError::ValueErr(format!(
                     "If-Else statement at {} does not have a corresponding ElseRecord",
                     if_record.loc
                 )));
@@ -560,7 +580,7 @@ impl Borrow<QLLoc> for WhileStmt {
 }
 
 impl WhileStmt {
-    pub fn from_record(record: &WhileRecord) -> std::result::Result<Self, LocParseError> {
+    pub fn from_record(record: &WhileRecord) -> std::result::Result<Self, LocTypeParseError> {
         let loc = QLLoc::from_str(&record.loc)?;
         let while_type = WhileType::from_str(&record.while_type)
             .map_err(|e| LocParseError::FormatErr(e.to_string()))?;
@@ -612,7 +632,7 @@ impl ForStmt {
         init_map: &ForInitMap,
         cond_map: &ForCondMap,
         update_map: &ForUpdateMap,
-    ) -> std::result::Result<Self, LocParseError> {
+    ) -> std::result::Result<Self, LocTypeParseError> {
         let loc = QLLoc::from_str(&record.loc)?;
 
         let body_entry = ChildEntry::from_loc_and_type(&record.body_loc, &record.body_type)?;

@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::analysis::constraint::intra::func_src_tree::{
-    code_query::CodeQLRunner,
-    stmts::{LocParseError, QLLoc},
+    code_query::{custom_class_query::VarType, CodeQLRunner},
+    stmts::{LocParseError, LocTypeParseError, QLLoc},
 };
 use color_eyre::eyre::Result;
 use eyre::bail;
@@ -18,13 +18,18 @@ const FUNC_QUERY_NAME: &str = "func.ql";
 #[derive(Deserialize)]
 pub struct FuncRecord {
     func_name: String,
+    name_loc: String,
     body_loc: String,
+    return_type_name: String,
+    return_type_loc: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncInfo {
     pub name: String,
+    pub name_loc: QLLoc,
     pub body_loc: QLLoc,
+    pub ret_type: VarType,
 }
 
 impl FuncInfo {
@@ -64,6 +69,27 @@ impl CodeQLRunner {
         let mut file_func_map: FuncMap = HashMap::new();
         let mut func_loc_map = HashMap::new();
         for rec in func_records.into_iter() {
+            let name_loc = match QLLoc::from_str(&rec.name_loc) {
+                Ok(loc) => loc,
+                Err(e) => match e {
+                    LocParseError::ValueErr(msg) => {
+                        log::warn!(
+                            "Skipping function {} due to loc parse error: {}",
+                            rec.func_name,
+                            msg
+                        );
+                        continue;
+                    }
+                    LocParseError::ZeroErr => {
+                        log::warn!("Skipping function {} due to zero loc value", rec.func_name);
+                        continue;
+                    }
+                    LocParseError::FormatErr(msg) => {
+                        bail!("Function {} has invalid loc format: {}", rec.func_name, msg);
+                    }
+                },
+            };
+
             let body_loc = match QLLoc::from_str(&rec.body_loc) {
                 Ok(loc) => loc,
                 Err(e) => match e {
@@ -85,6 +111,27 @@ impl CodeQLRunner {
                 },
             };
 
+            let ret_type = match VarType::new(&rec.return_type_name, &rec.return_type_loc) {
+                Ok(ret_type) => ret_type,
+                Err(e) => match e {
+                    LocTypeParseError::ValueErr(msg) => {
+                        log::warn!(
+                            "Skipping function {} due to return type parse error: {}",
+                            rec.func_name,
+                            msg
+                        );
+                        continue;
+                    }
+                    LocTypeParseError::FormatErr(msg) => {
+                        bail!(
+                            "Function {} has invalid return type format: {}",
+                            rec.func_name,
+                            msg
+                        );
+                    }
+                },
+            };
+
             func_loc_map.insert(rec.func_name.clone(), body_loc.clone());
 
             let file_path = &body_loc.file_path;
@@ -93,7 +140,9 @@ impl CodeQLRunner {
                 .or_insert_with(HashSet::new)
                 .insert(FuncInfo {
                     name: rec.func_name,
+                    name_loc,
                     body_loc,
+                    ret_type,
                 });
         }
         let mut func_info_table = HashMap::new();
