@@ -298,8 +298,8 @@ impl UBVHit {
             });
         }
 
-        let content = &line[VAL_PREFIX.len()..].trim();
-        let seg_vec: Vec<&str> = line.split_whitespace().collect();
+        let content = line[VAL_PREFIX.len()..].trim();
+        let seg_vec: Vec<&str> = content.split_whitespace().collect();
         assert!(seg_vec.len() == 2, "UBV Hit Parse: segment length is not 2");
         let loc = SrcLocEnum::from_str(seg_vec[0])?;
 
