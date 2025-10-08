@@ -444,6 +444,11 @@ impl ThreadExecTree {
     }
 
     fn parse_guard(&self, line: &str) -> Result<(Option<ExecAction>, Option<THCPEntry>)> {
+        // Skip Lines containing only Dest part of Jump action record
+        if line.starts_with("0 ") || line.starts_with("1 ") {
+            return Ok((None, None));
+        }
+
         let mut parse_res;
         let mut parse_content = line;
 

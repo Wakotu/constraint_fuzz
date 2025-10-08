@@ -2,12 +2,16 @@
 #include "utils.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include <cassert>
+#include <cstddef>
 #include <iostream>
 #include <llvm-19/llvm/ADT/StringRef.h>
+#include <llvm-19/llvm/ADT/Twine.h>
+#include <llvm-19/llvm/Analysis/LoopAccessAnalysis.h>
 #include <llvm-19/llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm-19/llvm/Analysis/LoopInfo.h>
 #include <llvm-19/llvm/IR/Constant.h>
 #include <llvm-19/llvm/IR/InstrTypes.h>
+#include <llvm-19/llvm/IR/Metadata.h>
 #include <llvm-19/llvm/IR/Value.h>
 #include <optional>
 #include <sstream>
@@ -37,6 +41,21 @@
 #include <string>
 #include <system_error>
 #include <unordered_set>
+
+// Only applied for Br Guard
+std::unordered_set<SrcLoc> loc_vis;
+
+std::optional<InstrumentationIRBuilder> get_unique_irb(Instruction *inst,
+                                                       Module &M) {
+  auto src_loc = get_src_loc(inst, M);
+  auto it = loc_vis.find(src_loc);
+  if (it == loc_vis.end()) {
+    loc_vis.insert(src_loc);
+    return std::optional<InstrumentationIRBuilder>(inst);
+  } else {
+    return std::nullopt;
+  }
+}
 
 PreservedAnalyses MyPass::run(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = runOnModule(M, MAM);
@@ -167,25 +186,21 @@ std::string get_src_path(Module &M) {
   return abs_path.str().str();
 }
 
-SrcLoc get_src_loc(Instruction *inst, Module &M) {
-  std::string src_path = get_src_path(M);
-  SrcLoc loc;
-  loc.src_path = src_path;
-  const DebugLoc &debug_loc = inst->getDebugLoc();
-  if (debug_loc) {
-    loc.line = debug_loc.getLine();
-    loc.col = debug_loc.getCol();
-  } else {
-    loc.line = std::nullopt;
-    loc.col = std::nullopt;
+std::string get_file_path(const DebugLoc &loc, Module &M) {
+  auto *scope = loc->getScope();
+  if (!scope) {
+    std::string src_path = get_src_path(M);
+    return src_path;
   }
-  return loc;
+  auto dir = scope->getDirectory();
+  auto file_name = scope->getFilename();
+  return (Twine(dir) + "/" + file_name).str();
 }
 
-SrcLoc get_src_loc_with_path(Instruction *inst, StringRef src_path) {
+SrcLoc get_src_loc(Instruction *inst, Module &M) {
   SrcLoc loc;
-  loc.src_path = src_path;
   const DebugLoc &debug_loc = inst->getDebugLoc();
+  loc.src_path = get_file_path(debug_loc, M);
   if (debug_loc) {
     loc.line = debug_loc.getLine();
     loc.col = debug_loc.getCol();
@@ -294,29 +309,20 @@ bool is_merge_br(BranchInst *br_inst) {
 //   return BB.getFirstNonPHI();
 // }
 
-void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
-                             BasicBlock *dest_bb, bool br_val,
-                             const char *prmpt, bool is_br) {
-  // collect message: br src location , dest src location
-  std::string src_path = get_src_path(M);
+void insert_dest_guard_for_jump_inst(Module &M, BasicBlock *dest_bb,
+                                     bool br_val) {
+  // get dest instruction in dest bb
 
-  SrcLoc from_loc = get_src_loc_with_path(jmp_inst, src_path);
-  if (!from_loc.has_value()) {
-    errs() << RED << "[Error] " << RESET
-           << "Conditional instruction has no debug location: ";
-    jmp_inst->print(errs());
-    errs() << "\n";
-    // return;
-  }
-  Instruction *dest_inst = dest_bb->getFirstNonPHI();
+  Instruction *dest_inst = &*dest_bb->getFirstInsertionPt();
 
-  SrcLoc dest_loc = get_src_loc_with_path(dest_inst, src_path);
+  SrcLoc dest_loc = get_src_loc(dest_inst, M);
   while (!dest_loc.is_valid() && dest_inst->getNextNode()) {
     // try to get the next instruction if the first one has no debug location
     dest_inst = dest_inst->getNextNode();
-    dest_loc = get_src_loc_with_path(dest_inst, src_path);
+    dest_loc = get_src_loc(dest_inst, M);
   }
 
+  // dest loc error handle
   if (!dest_loc.has_value()) {
     errs() << RED << "[Error] " << RESET
            << "Destination block has no debug location: ";
@@ -325,46 +331,121 @@ void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
     // return;
   }
 
-  // format rec message
+  // dest record part construction
   std::stringstream ss;
-  ss << prmpt << ": ";
-  // cond instruction location
-  if (is_br) {
+  ss << br_val << " " << dest_loc << "\n";
+  std::string dest_rec = ss.str();
 
-    BranchInst *br_inst = dyn_cast<BranchInst>(jmp_inst);
-    if (!br_inst) {
-      errs() << RED << "[Error] " << RESET << "jmp_inst is not a BranchInst: ";
-      jmp_inst->print(errs());
-      errs() << "\n";
-      ss << "NullLoc ";
-      goto br_rec; // skip the condition location if not a branch instruction
-    }
-
-    // offer value location
-    Instruction *cond_val_inst = get_cond_inst_from_br(br_inst);
-    if (!cond_val_inst) {
-      ss << "NullLoc ";
-      goto br_rec; // skip the condition location if no condition instruction
-    }
-    // assert(cond_inst && "Condition instruction should not be null");
-
-    if (!isa<PHINode>(cond_val_inst)) {
-      SrcLoc cond_val_loc = get_src_loc_with_path(cond_val_inst, src_path);
-      ss << cond_val_loc << " ";
-    }
+  // Guard  insert
+  FunctionCallee content_log_func_cl = get_content_log_func_decl(M);
+  auto irb = get_unique_irb(dest_inst, M);
+  if (irb.has_value()) {
+    // create global string
+    auto rec_str_ptr = irb->CreateGlobalStringPtr(dest_rec);
+    // insert invocation
+    irb->CreateCall(content_log_func_cl, {rec_str_ptr});
   }
-br_rec:
-  ss << from_loc << " " << br_val << " " << dest_loc;
+}
+
+/**
+  Param:
+  - prompt: no trailing ": "
+*/
+void insert_from_guard_for_jump_inst(Module &M, Instruction *jmp_inst,
+                                     const char *prompt) {
+
+  SrcLoc from_loc = get_src_loc(jmp_inst, M);
+  if (!from_loc.has_value()) {
+    errs() << RED << "[Error] " << RESET
+           << "Conditional instruction has no debug location: ";
+    jmp_inst->print(errs());
+    errs() << "\n";
+    // return;
+  }
+
+  std::stringstream ss;
+  ss << prompt << ": " << from_loc;
+
   std::string rec = ss.str();
 
   // add declaration of logging function
-  FunctionCallee rec_log_func_cl = get_rec_log_func_decl(M);
-  InstrumentationIRBuilder irb(dest_inst);
+  FunctionCallee content_log_func_cl = get_content_log_func_decl(M);
+  InstrumentationIRBuilder irb(jmp_inst);
   // create global string
   auto rec_str_ptr = irb.CreateGlobalStringPtr(rec);
   // insert invocation
-  irb.CreateCall(rec_log_func_cl, {rec_str_ptr});
+  irb.CreateCall(content_log_func_cl, {rec_str_ptr});
 }
+
+// void instr_branch_dest_guard(Module &M, Instruction *jmp_inst,
+//                              BasicBlock *dest_bb, bool br_val,
+//                              const char *prmpt, bool is_br) {
+//   // collect message: br src location , dest src location
+//   std::string src_path = get_src_path(M);
+
+//   SrcLoc from_loc = get_src_loc_with_path(jmp_inst, src_path);
+//   if (!from_loc.has_value()) {
+//     errs() << RED << "[Error] " << RESET
+//            << "Conditional instruction has no debug location: ";
+//     jmp_inst->print(errs());
+//     errs() << "\n";
+//     // return;
+//   }
+//   Instruction *dest_inst = dest_bb->getFirstNonPHI();
+
+//   SrcLoc dest_loc = get_src_loc_with_path(dest_inst, src_path);
+//   while (!dest_loc.is_valid() && dest_inst->getNextNode()) {
+//     // try to get the next instruction if the first one has no debug location
+//     dest_inst = dest_inst->getNextNode();
+//     dest_loc = get_src_loc_with_path(dest_inst, src_path);
+//   }
+
+//   if (!dest_loc.has_value()) {
+//     errs() << RED << "[Error] " << RESET
+//            << "Destination block has no debug location: ";
+//     dest_inst->print(errs());
+//     errs() << "\n";
+//     // return;
+//   }
+
+//   // format rec message
+//   std::stringstream ss;
+//   ss << prmpt << ": ";
+//   // cond instruction location
+//   if (is_br) {
+
+//     BranchInst *br_inst = dyn_cast<BranchInst>(jmp_inst);
+//     if (!br_inst) {
+//       errs() << RED << "[Error] " << RESET << "jmp_inst is not a BranchInst:
+//       "; jmp_inst->print(errs()); errs() << "\n"; ss << "NullLoc "; goto
+//       br_rec; // skip the condition location if not a branch instruction
+//     }
+
+//     // offer value location
+//     Instruction *cond_val_inst = get_cond_inst_from_br(br_inst);
+//     if (!cond_val_inst) {
+//       ss << "NullLoc ";
+//       goto br_rec; // skip the condition location if no condition instruction
+//     }
+//     // assert(cond_inst && "Condition instruction should not be null");
+
+//     if (!isa<PHINode>(cond_val_inst)) {
+//       SrcLoc cond_val_loc = get_src_loc_with_path(cond_val_inst, src_path);
+//       ss << cond_val_loc << " ";
+//     }
+//   }
+// br_rec:
+//   ss << from_loc << " " << br_val << " " << dest_loc;
+//   std::string rec = ss.str();
+
+//   // add declaration of logging function
+//   FunctionCallee rec_log_func_cl = get_rec_log_func_decl(M);
+//   InstrumentationIRBuilder irb(dest_inst);
+//   // create global string
+//   auto rec_str_ptr = irb.CreateGlobalStringPtr(rec);
+//   // insert invocation
+//   irb.CreateCall(rec_log_func_cl, {rec_str_ptr});
+// }
 
 // void output_cond_instruction(BranchInst *br_inst, Module &M) {
 //   Value *cond = br_inst->getCondition();
@@ -383,8 +464,9 @@ br_rec:
 //   errs() << "\n";
 // }
 
-bool instr_br_inst(Instruction *term, Module &M) {
+bool instru_for_br_inst(Instruction *term, Module &M) {
   if (BranchInst *br_inst = dyn_cast<BranchInst>(term)) {
+
     // only instruments at conditional branch instructions
     if (br_inst->isConditional()) {
       // output_cond_instruction(br_inst, M);
@@ -393,47 +475,93 @@ bool instr_br_inst(Instruction *term, Module &M) {
              << "Branch Location: " << br_loc << "\n";
       // locate a conditional br instruction
 
-      const char *prmpt = is_merge_br(br_inst) ? "Merge Br Guard" : "Br Guard";
+      // handle From part action record logging
+      std::stringstream ss;
+      std::string src_path = get_src_path(M);
+
+      // differ at merge and normar br
+      bool is_merge = is_merge_br(br_inst);
+      const char *prompt;
+
+      // account for prompt and val loc construction
+      if (is_merge) {
+        prompt = "Merge Br Guard";
+        ss << prompt << ": ";
+      } else {
+        prompt = "Br Guard";
+        ss << prompt << ": ";
+        // get value instruction location
+        Instruction *cond_val_inst = get_cond_inst_from_br(br_inst);
+        if (!cond_val_inst) {
+          ss << "NullLoc ";
+        }
+
+        assert(!isa<PHINode>(cond_val_inst)); // may be omitted
+        SrcLoc cond_val_loc = get_src_loc(cond_val_inst, M);
+        ss << cond_val_loc << " ";
+      }
+
+      // from loc construction
+      SrcLoc from_loc = get_src_loc(br_inst, M);
+      if (!from_loc.has_value()) {
+        errs() << RED << "[Error] " << RESET
+               << "Conditional instruction has no debug location: ";
+        br_inst->print(errs());
+        errs() << "\n";
+        // return;
+      }
+
+      ss << from_loc << " ";
+      std::string from_rec = ss.str();
+
+      // IR insertion
+      FunctionCallee content_log_func_cl = get_content_log_func_decl(M);
+
+      InstrumentationIRBuilder irb(br_inst);
+      Constant *rec_str_ptr = irb.CreateGlobalStringPtr(from_rec);
+      irb.CreateCall(content_log_func_cl, {rec_str_ptr});
 
       BasicBlock *true_dest = br_inst->getSuccessor(0);
       BasicBlock *false_dest = br_inst->getSuccessor(1);
-      instr_branch_dest_guard(M, br_inst, true_dest, true, prmpt, true);
-      instr_branch_dest_guard(M, br_inst, false_dest, false, prmpt, true);
+      insert_dest_guard_for_jump_inst(M, true_dest, true);
+      insert_dest_guard_for_jump_inst(M, false_dest, false);
       return true;
     }
   }
   return false;
 }
 
-bool instr_switch_inst(Instruction *term, Module &M) {
+bool instru_for_switch_inst(Instruction *term, Module &M) {
   if (SwitchInst *switch_inst = dyn_cast<SwitchInst>(term)) {
-    // locate a switch instruction
+    // logs
     SrcLoc switch_loc = get_src_loc(switch_inst, M);
     errs() << BLUE << "[Switch Instrument] " << RESET
            << "Switch Location: " << switch_loc << "\n";
+
+    insert_from_guard_for_jump_inst(M, switch_inst, "Switch Guard");
+
     BasicBlock *default_dest = switch_inst->getDefaultDest();
-    instr_branch_dest_guard(M, switch_inst, default_dest, true, "Switch Guard",
-                            false);
+    insert_dest_guard_for_jump_inst(M, default_dest, true);
     for (auto case_it = switch_inst->case_begin();
          case_it != switch_inst->case_end(); ++case_it) {
       BasicBlock *dest = case_it->getCaseSuccessor();
-      instr_branch_dest_guard(M, switch_inst, dest, true, "Switch Guard",
-                              false);
+      insert_dest_guard_for_jump_inst(M, dest, true);
     }
     return true;
   }
   return false;
 }
 
-bool instr_indirectbr_inst(Instruction *term, Module &M) {
+bool instru_for_indirectbr_inst(Instruction *term, Module &M) {
   if (IndirectBrInst *indirect_br_inst = dyn_cast<IndirectBrInst>(term)) {
     // locate an indirect br instruction
     SrcLoc indirect_br_loc = get_src_loc(indirect_br_inst, M);
     errs() << BLUE << "[IndirectBr Instrument] " << RESET
            << "Indirect Branch Location: " << indirect_br_loc << "\n";
+
+    insert_from_guard_for_jump_inst(M, indirect_br_inst, "IndirectBr Guard");
     for (BasicBlock *dest : indirect_br_inst->successors()) {
-      instr_branch_dest_guard(M, indirect_br_inst, dest, true,
-                              "IndirectBr Guard", false);
+      insert_dest_guard_for_jump_inst(M, dest, true);
     }
     return true;
   }
@@ -622,9 +750,9 @@ bool instru_at_selections(Module &M, ModuleAnalysisManager &MAM) {
   for (Function &F : M) {
     for (auto &BB : F) {
       Instruction *term = BB.getTerminator();
-      flag |= instr_br_inst(term, M);
-      flag |= instr_switch_inst(term, M);
-      flag |= instr_indirectbr_inst(term, M);
+      flag |= instru_for_br_inst(term, M);
+      flag |= instru_for_switch_inst(term, M);
+      flag |= instru_for_indirectbr_inst(term, M);
     }
   }
 
@@ -675,12 +803,12 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
   }
 
   // get the first instruction in the header
-  Instruction *header_term = header->getTerminator();
-  if (!header_term) {
+  Instruction *header_inst = &*header->getFirstInsertionPt();
+  if (!header_inst) {
     return false; // no instruction to instrument
   }
 
-  SrcLoc header_loc = get_src_loc(header_term, M);
+  SrcLoc header_loc = get_src_loc(header_inst, M);
   errs() << BLUE << "[Loop Instrument] " << RESET
          << "Loop Header Location: " << header_loc << "\n";
   std::stringstream ss;
@@ -704,7 +832,7 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
    */
 
   // create instrumentation IR builder
-  InstrumentationIRBuilder irb(header_term);
+  InstrumentationIRBuilder irb(header_inst);
 
   // create a call to loop_hit function with loop location
   auto loop_loc_str = irb.CreateGlobalStringPtr(loop_loc);
@@ -975,11 +1103,11 @@ bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // invocation instrumentation should be done first
   flag |= instru_at_func_invocations(M, MAM);
   flag |= instru_func_entry_and_exit(M, MAM);
-  flag |= instru_at_selections(M, MAM);
   // flag |= instr_bool_value(M);
   flag |= instru_for_loop_context(M, MAM);
   flag |= instru_for_thread_creation(M, MAM);
   flag |= instru_for_longjmp_invocation(M, MAM);
+  flag |= instru_at_selections(M, MAM);
   return flag;
 }
 
