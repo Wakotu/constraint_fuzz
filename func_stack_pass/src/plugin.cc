@@ -364,7 +364,7 @@ void insert_from_guard_for_jump_inst(Module &M, Instruction *jmp_inst,
   }
 
   std::stringstream ss;
-  ss << prompt << ": " << from_loc;
+  ss << prompt << ": " << from_loc << " ";
 
   std::string rec = ss.str();
 
