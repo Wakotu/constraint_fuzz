@@ -48,7 +48,7 @@ pub enum ProcessUnitVariant {
     CondExpr(CondExprUnit),
 }
 
-pub struct InnerCFInfo {
+pub struct InnerJumpInfo {
     pub from_loc: usize,
     pub dest_loc: usize,
 }

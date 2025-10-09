@@ -1,5 +1,6 @@
 use color_eyre::eyre::{self, Result};
 use std::fmt;
+use std::path::Path;
 
 use color_eyre::eyre::bail;
 
@@ -310,7 +311,7 @@ impl JumpAction {
         })
     }
 
-    pub fn parse_jump_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_jump_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
         if let Some(simple_action) = GuardParseError::to_eyre(Self::parse_simple_guard(line))? {
             return Ok(simple_action);
         }
@@ -383,7 +384,7 @@ impl ThreadAction {
         self.tid
     }
 
-    pub fn parse_thread_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_thread_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
         if !line.starts_with(Self::THREAD_ACTION_PREFIX) {
             return Err(GuardParseError::as_prefix_err(eyre::eyre!(
                 "Line does not start with 'Thread Creation:': {}",
@@ -544,7 +545,7 @@ impl LoopAction {
     //     SrcLoc::from_str(content_slice)
     // }
 
-    pub fn parse_loop_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_loop_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
         let prefix = get_prefix(line)?;
 
         // Loop Entry Guards
@@ -679,7 +680,7 @@ pub enum RecurAction {
 }
 
 impl RecurAction {
-    pub fn parse_recur_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_recur_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
         match line {
             "Recur Lock locked" => Ok(RecurAction::Locked),
             "Recur Lock released" => Ok(RecurAction::Released),
@@ -693,11 +694,53 @@ impl RecurAction {
 }
 
 #[derive(Clone)]
+pub struct SelectAction {
+    pub loc: SrcLocEnum,
+    pub val: bool,
+}
+
+impl fmt::Debug for SelectAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SelectAction({:?})", self.loc)
+    }
+}
+
+impl SelectAction {
+    pub fn parse_select_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
+        const SEL_PREFIX: &str = "Select Guard: ";
+        if !line.starts_with(SEL_PREFIX) {
+            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+                "
+                Line does not start with select guard prefix: {}",
+                line
+            )));
+        }
+
+        let content = line[SEL_PREFIX.len()..].trim();
+        let seg_vec: Vec<&str> = content.split_whitespace().collect();
+        let loc = SrcLocEnum::from_str(seg_vec[0])?;
+
+        let val_str = seg_vec[1];
+        let val = match val_str {
+            "0" => false,
+            "1" => true,
+            _ => {
+                return Err(GuardParseError::as_parse_err(eyre::eyre!(
+                    "Select Action Record parse: invalid val string"
+                )))
+            }
+        };
+        Ok(Self { loc, val })
+    }
+}
+
+#[derive(Clone)]
 pub enum ExecAction {
     Func(FuncAction),
     Intra(JumpAction),
     /// Unconditional Branch Value
     UBV(UBVHit),
+    Select(SelectAction),
     Loop(LoopAction),
     Recur(RecurAction),
     Thread(ThreadAction),
@@ -711,6 +754,7 @@ impl ExecAction {
     pub fn get_match_loc(&self) -> Option<&SrcLocEnum> {
         match self {
             ExecAction::UBV(ubv_hit) => Some(ubv_hit.get_loc()),
+            ExecAction::Select(select_act) => Some(&select_act.loc),
             ExecAction::Func(func_act) => match &func_act {
                 FuncAction::Call(call_act) => call_act.invoc_loc_op.as_ref(),
                 FuncAction::Return { .. } => None,
@@ -726,6 +770,7 @@ impl ExecAction {
     pub fn plain_stmt_suitable(&self) -> bool {
         match self {
             ExecAction::UBV(_) => true,
+            ExecAction::Select(_) => true,
             ExecAction::Func(func_act) => match func_act {
                 FuncAction::Call(_) => true,
                 FuncAction::Return { .. } => false,
@@ -770,6 +815,7 @@ impl DotId for ExecAction {
         let cnt = incre_dot_counter();
         match self {
             ExecAction::UBV(_) => format!("UBVHit_Action_{}", cnt),
+            ExecAction::Select(_) => format!("Select_Action_{}", cnt),
             ExecAction::Func(func_act) => func_act.get_dot_id(cnt),
             ExecAction::Intra(intra_act) => intra_act.get_dot_id(cnt),
             ExecAction::Loop(_) => format!("Loop_Action_{}", cnt),
@@ -786,6 +832,7 @@ impl fmt::Debug for ExecAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ExecAction::UBV(ubv_hit) => write!(f, "UBVHit: {:?}", ubv_hit),
+            ExecAction::Select(select_act) => write!(f, "SelectAction: {:?}", select_act),
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
             ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),

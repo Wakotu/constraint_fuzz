@@ -494,11 +494,21 @@ void thread_rec(const char *loc, void *tid_ptr) {
 // }
 
 /**
-  Unconditional Branch Value Instrumentation
+  Unconditional Branch Value record output
 */
 
 void ubv_rec(const char *loc, bool val) {
   std::stringstream ss;
   ss << "Unconditional Branch Value: " << loc << " " << val;
+  print_rec_to_file_with_guard(ss.str().c_str());
+}
+
+/**
+  Selection instruction record output
+*/
+
+void select_rec(const char *loc, bool val) {
+  std::stringstream ss;
+  ss << "Select Guard: " << loc << " " << val;
   print_rec_to_file_with_guard(ss.str().c_str());
 }

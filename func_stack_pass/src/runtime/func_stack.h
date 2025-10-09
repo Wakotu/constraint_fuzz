@@ -19,6 +19,8 @@ void thread_rec(const char *loc, void *tid_ptr);
 
 void ubv_rec(const char *loc, bool val);
 
+void select_rec(const char *loc, bool val);
+
 #ifdef __cplusplus
 }
 #endif

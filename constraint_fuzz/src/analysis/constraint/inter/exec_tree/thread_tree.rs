@@ -18,7 +18,7 @@ use tokio::join;
 use crate::analysis::constraint::inter::error::GuardParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
     get_prefix, ExecAction, FuncAction, FuncCallAction, JumpAction, LoopAction, RecurAction,
-    ThreadAction,
+    SelectAction, ThreadAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
 use crate::analysis::constraint::inter::loc::SrcLocEnum;
@@ -269,8 +269,8 @@ impl ExecFuncNode {
 /// Stands for Unconditional Branch Value Hit.
 #[derive(Clone)]
 pub struct UBVHit {
-    loc: SrcLocEnum,
-    val: bool,
+    pub loc: SrcLocEnum,
+    pub val: bool,
 }
 
 impl fmt::Debug for UBVHit {
@@ -290,7 +290,7 @@ impl UBVHit {
     pub fn get_line(&self) -> Option<usize> {
         self.loc.get_line()
     }
-    pub fn parse_value_guard(line: &str) -> std::result::Result<UBVHit, GuardParseError> {
+    pub fn parse_ubv_hit_rec(line: &str) -> std::result::Result<UBVHit, GuardParseError> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
         if !line.starts_with(VAL_PREFIX) {
             return Err(GuardParseError::PrefixError {
@@ -410,23 +410,28 @@ impl ThreadExecTree {
         line: &str,
     ) -> std::result::Result<(Option<ExecAction>, Option<THCPEntry>), GuardParseError> {
         // value hit
-        if let Some(ubv_hit) = GuardParseError::to_eyre(UBVHit::parse_value_guard(line))? {
+        if let Some(ubv_hit) = GuardParseError::to_eyre(UBVHit::parse_ubv_hit_rec(line))? {
             return Ok((Some(ExecAction::UBV(ubv_hit)), None));
         }
+        // parse for select action records
+        if let Some(sel_act) = GuardParseError::to_eyre(SelectAction::parse_select_act_rec(line))? {
+            return Ok((Some(ExecAction::Select(sel_act)), None));
+        }
         // simple guards
-        if let Some(intra_act) = GuardParseError::to_eyre(JumpAction::parse_jump_guard(line))? {
+        if let Some(intra_act) = GuardParseError::to_eyre(JumpAction::parse_jump_act_rec(line))? {
             return Ok((Some(ExecAction::Intra(intra_act)), None));
         }
         // Loop Guard
-        if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_guard(line))? {
+        if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_act_rec(line))? {
             return Ok((Some(ExecAction::Loop(loop_act)), None));
         }
         // Recur Guard
-        if let Some(recur_act) = GuardParseError::to_eyre(RecurAction::parse_recur_guard(line))? {
+        if let Some(recur_act) = GuardParseError::to_eyre(RecurAction::parse_recur_act_rec(line))? {
             return Ok((Some(ExecAction::Recur(recur_act)), None));
         }
         // Thread Guard
-        if let Some(thread_act) = GuardParseError::to_eyre(ThreadAction::parse_thread_guard(line))?
+        if let Some(thread_act) =
+            GuardParseError::to_eyre(ThreadAction::parse_thread_act_rec(line))?
         {
             // construct a thcp entry
             let func_node_ptr = self.cur_node_ptr.clone();

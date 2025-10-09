@@ -263,6 +263,19 @@ FunctionCallee get_ubv_rec_func_decl(Module &M) {
   return ubv_rec_func_cl;
 }
 
+FunctionCallee get_sel_rec_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+  FunctionType *sel_rec_func_ty =
+      FunctionType::get(void_ty, {i8_ptr_ty, i8_ty}, false);
+  FunctionCallee sel_rec_func_cl =
+      M.getOrInsertFunction("select_rec", sel_rec_func_ty);
+  return sel_rec_func_cl;
+}
+
 /**
   Br Instruction operations
 */
@@ -707,7 +720,7 @@ bool instr_from_phi_node(PHINode *phi_node, Module &M) {
       InstrumentationIRBuilder irb(val_inst);
 
       // NOTE: line break at the end
-      Constant *fmt_str = irb.CreateGlobalStringPtr("UBV Value: %d\n");
+      // Constant *fmt_str = irb.CreateGlobalStringPtr("UBV Value: %d\n");
       // create global string
       auto loc_str_ptr = irb.CreateGlobalStringPtr(rec);
       // insert invocation
@@ -718,6 +731,7 @@ bool instr_from_phi_node(PHINode *phi_node, Module &M) {
   return flag;
 }
 
+// br -> PHI Node -> UBV value starting from phi node
 bool instr_unconditional_br_value(Instruction *term, Module &M) {
 
   BranchInst *br_inst = dyn_cast<BranchInst>(term);
@@ -739,11 +753,38 @@ bool instr_unconditional_br_value(Instruction *term, Module &M) {
   return flag; // return the result of phi node instrumentation
 }
 
+bool instru_for_select_inst(Instruction *inst, Module &M) {
+  if (SelectInst *sel_inst = dyn_cast<SelectInst>(inst)) {
+    Value *cond_val = sel_inst->getCondition();
+    if (Instruction *cond_inst = dyn_cast<Instruction>(cond_val)) {
+      if (cond_inst->getType()->isIntegerTy(1)) {
+        if (PHINode *phi_node = dyn_cast<PHINode>(cond_inst)) {
+          return instr_from_phi_node(phi_node, M);
+        }
+        SrcLoc cond_loc = get_src_loc(cond_inst, M);
+
+        std::stringstream ss;
+        ss << cond_loc;
+        std::string cond_loc_str = ss.str();
+
+        FunctionCallee sel_rec_func_cl = get_sel_rec_func_decl(M);
+
+        InstrumentationIRBuilder irb(sel_inst);
+        Constant *cond_loc_str_ptr = irb.CreateGlobalStringPtr(cond_loc_str);
+        irb.CreateCall(sel_rec_func_cl, {cond_loc_str_ptr, cond_inst});
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
   Instrumentation at select control flow instructions
   - Branch Instruction
   - Switch Instruction
   - Indirect Branch Instruction:
+  - select instruction
 */
 bool instru_at_selections(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
@@ -753,6 +794,14 @@ bool instru_at_selections(Module &M, ModuleAnalysisManager &MAM) {
       flag |= instru_for_br_inst(term, M);
       flag |= instru_for_switch_inst(term, M);
       flag |= instru_for_indirectbr_inst(term, M);
+    }
+  }
+
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        flag |= instru_for_select_inst(&I, M);
+      }
     }
   }
 
