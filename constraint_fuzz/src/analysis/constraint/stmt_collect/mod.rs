@@ -21,7 +21,7 @@ use crate::{
             nodes::{FuncSrcTree, PlainStmtNode, SharedStmtNodePtr, StmtNodeVariants},
             stmts::QLLoc,
         },
-        stmt_collect::inner_stmt::{InnerStmtHandler, InvocSubstOpr},
+        stmt_collect::inner_stmt::{ArgExpr, InnerStmtHandler, InvocSubstOpr},
     },
     feedback::branches::constraints::UBConstraint,
 };
@@ -33,32 +33,59 @@ use eyre::bail;
 
 pub type StmtStr = String;
 
-pub struct SubCondExpr {
-    range: (usize, usize),
-    cond_val: bool,
-}
-
-pub struct CondExprUnit {
-    cond_val: bool,
-    sub_expr_vec: Vec<SubCondExpr>,
-}
-
 pub enum ProcessUnitVariant {
     Plain {},
-    CondExpr(CondExprUnit),
+    CondExpr { val: bool },
 }
 
-pub struct InnerJumpInfo {
-    pub from_loc: usize,
-    pub dest_loc: usize,
+#[derive(Clone, PartialEq, Eq)]
+pub struct InnerCondRec {
+    inner_idx: usize,
+    cond_val: bool,
+}
+
+impl InnerCondRec {
+    pub fn before(&self, loc: usize) -> bool {
+        self.inner_idx < loc
+    }
+
+    pub fn before_or_eq(&self, loc: usize) -> bool {
+        self.inner_idx <= loc
+    }
+
+    pub fn derive_minus(&self, loc: usize) -> Self {
+        Self {
+            inner_idx: self.inner_idx - loc,
+            cond_val: self.cond_val,
+        }
+    }
+
+    pub fn derive_plus(&self, loc: usize) -> Self {
+        Self {
+            inner_idx: self.inner_idx + loc,
+            cond_val: self.cond_val,
+        }
+    }
+}
+
+impl PartialOrd for InnerCondRec {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.inner_idx.partial_cmp(&other.inner_idx)
+    }
+}
+
+impl Ord for InnerCondRec {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.inner_idx.cmp(&other.inner_idx)
+    }
 }
 
 pub struct ProcessUnit {
-    content: String,
-    valid_var_vec: Vec<SrcVar>,
+    pub content: String,
+    pub valid_var_vec: Vec<SrcVar>,
     // TODO: to be added
-    // inner_cf_vec: Vec<InnerCFInfo>,
-    variants: ProcessUnitVariant,
+    pub cond_rec_vec: Vec<InnerCondRec>,
+    pub variants: ProcessUnitVariant,
 }
 
 impl ProcessUnit {
@@ -66,10 +93,45 @@ impl ProcessUnit {
      * Construction Related
      */
 
+    /**
+     * Plain means no extra information
+     */
     pub fn create_plain_pu(content: String, valid_var_vec: Vec<SrcVar>) -> Self {
         Self {
-            content: content.to_string(),
+            content,
             valid_var_vec,
+            cond_rec_vec: vec![],
+            variants: ProcessUnitVariant::Plain {},
+        }
+    }
+
+    pub fn create_pre_func_assign_pu(arg_expr: &ArgExpr, param_var: &SrcVar) -> Self {
+        let param_var_str = param_var.var_name_str();
+        let pre_off = param_var_str.len() + 3;
+        let assign_str = format!("{} = {};", param_var.var_name_str(), arg_expr.expr_str);
+
+        let mut var_vec = arg_expr.var_vec.clone();
+        var_vec.push(param_var.clone());
+
+        let cond_vec = arg_expr.derive_cond_vec(pre_off);
+
+        Self {
+            content: assign_str,
+            valid_var_vec: var_vec,
+            cond_rec_vec: cond_vec,
+            variants: ProcessUnitVariant::Plain {},
+        }
+    }
+
+    pub fn create_plain_pu_with_cond_recs(
+        content: String,
+        valid_var_vec: Vec<SrcVar>,
+        cond_recs: &Vec<InnerCondRec>,
+    ) -> Self {
+        Self {
+            content,
+            valid_var_vec,
+            cond_rec_vec: cond_recs.to_vec(),
             variants: ProcessUnitVariant::Plain {},
         }
     }
@@ -85,6 +147,7 @@ impl ProcessUnit {
         Self {
             content,
             valid_var_vec,
+            cond_rec_vec: vec![],
             variants: ProcessUnitVariant::Plain {},
         }
     }
@@ -134,130 +197,6 @@ impl<'a> StmtCollector<'a> {
         loop_act.is_loop_entry() && Self::is_inside_loop(stmt_ptr)
     }
 
-    /**
-     * Returns (start_idx, left_idx, end_idx)
-     */
-    // fn get_subst_idx_and_len(
-    //     stmt_ptr: SharedStmtNodePtr,
-    //     func_name: &str,
-    //     invoc_loc_op: Option<&SrcLocEnum>,
-    // ) -> Result<(usize, usize, usize, String)> {
-    //     let stmt_node = stmt_ptr.borrow();
-    //     let stmt_loc = stmt_node.get_loc();
-    //     let (stmt_str, invoc_idx_op) = stmt_loc.get_content_with_loc_conversion(invoc_loc_op)?;
-    //     let invoc_idx = match invoc_idx_op {
-    //         Some(idx) => idx,
-    //         // fallback invoc_loc searching method
-    //         None => stmt_str
-    //             .find(func_name)
-    //             .expect("Failed to find function name in statement"),
-    //     };
-
-    //     let mut idx = invoc_idx + func_name.len();
-    //     while idx < stmt_str.len() && stmt_str.as_bytes()[idx].is_ascii_whitespace() {
-    //         idx += 1;
-    //     }
-    //     assert!(stmt_str.as_bytes()[idx] == b'(');
-    //     let left_idx = idx;
-    //     idx += 1;
-    //     let param_part = &stmt_str[idx..];
-    //     let right_idx = param_part
-    //         .find(')')
-    //         .expect("Failed to find closing parenthesis for function parameters");
-
-    //     Ok((invoc_idx, left_idx, right_idx, stmt_str))
-    // }
-
-    /// Construct assignment statements for function parameters before function invocation
-    // fn construct_func_prior_stmts(
-    //     &self,
-    //     stmt_ptr: SharedStmtNodePtr,
-    //     stmt_str: &str,
-    //     func_name: &str,
-    //     // (left_idx, right_idx) -> FuncInvoc Action
-    //     left_idx: usize,
-    //     right_idx: usize,
-    //     // invoc_loc_op: Option<&SrcLocEnum>,
-    // ) -> Result<Vec<ProcessUnit>> {
-    //     let param_part = &stmt_str[left_idx + 1..right_idx];
-    //     let param_name_vec: Vec<&str> = param_part.split(',').map(|s| s.trim()).collect();
-
-    //     // let live_var_vec = ProcessUnit::get_live_var(stmt_ptr.clone());
-    //     let live_var_name_map = SrcVar::get_live_var_name_map(stmt_ptr.clone());
-
-    //     let mut param_var_vec: Vec<SrcVar> = vec![];
-    //     for param_name in param_name_vec.iter() {
-    //         let param_var_op = live_var_name_map.get(&param_name.to_string());
-    //         if let Some(param_var) = param_var_op {
-    //             param_var_vec.push(param_var.clone());
-    //         } else {
-    //             bail!(
-    //                 "Failed to find parameter variable: {} in live variables",
-    //                 param_name
-    //             );
-    //         }
-    //     }
-
-    //     // get formal parameter
-    //     let called_func_tree = self.get_src_func_tree(func_name)?;
-    //     let arg_var_vec = called_func_tree.get_formal_param_vec();
-
-    //     assert!(param_var_vec.len() == arg_var_vec.len());
-
-    //     // construct assignment statements for each param-arg pair
-    //     let mut pu_vec: Vec<ProcessUnit> = vec![];
-    //     for (param_var, arg_var) in param_var_vec.iter().zip(arg_var_vec.iter()) {
-    //         assert!(
-    //             param_var.var_type == arg_var.var_type,
-    //             "Parameter and argument variable types do not match: {:?} vs {:?}",
-    //             param_var.var_type,
-    //             arg_var.var_type
-    //         );
-    //         let content = format!("{} = {};", param_var.name, arg_var.name);
-    //         pu_vec.push(ProcessUnit::create_plain_pu(
-    //             content,
-    //             vec![arg_var.clone(), param_var.clone()],
-    //         ));
-    //     }
-
-    //     Ok(pu_vec)
-    // }
-
-    // fn func_invoc_handle(
-    //     &self,
-    //     stmt_ptr: SharedStmtNodePtr,
-    //     func_name: &str,
-    //     called_func_node_ptr: SharedFuncNodePtr,
-    //     invoc_loc_op: Option<&SrcLocEnum>,
-    //     pu_vec: &mut Vec<ProcessUnit>,
-    // ) -> Result<Option<FuncInvocRes>> {
-    //     // prior
-    //     let (start_idx, left_idx, right_idx, stmt_str) =
-    //         Self::get_subst_idx_and_len(stmt_ptr.clone(), func_name, invoc_loc_op)?;
-    //     let prior_stmt_vec =
-    //         self.construct_func_prior_stmts(stmt_ptr, &stmt_str, func_name, left_idx, right_idx)?;
-    //     pu_vec.extend(prior_stmt_vec);
-
-    //     // call
-    //     let called_func_tree = self.get_src_func_tree(func_name)?;
-    //     let (func_pu_vec, ret_var_op) =
-    //         self.collect_intra(called_func_tree, called_func_node_ptr)?;
-    //     pu_vec.extend(func_pu_vec);
-
-    //     match ret_var_op {
-    //         None => Ok(None),
-    //         Some(ret_var) => {
-    //             let subst_str = ret_var.var_name_str();
-    //             let opr = InvocSubstOpr {
-    //                 start_idx,
-    //                 end_idx: right_idx,
-    //                 subst_str,
-    //             };
-    //             Ok(Some(FuncInvocRes { opr, ret_var }))
-    //         }
-    //     }
-    // }
-
     fn create_ret_var(src_tree: &FuncSrcTree, ret_loc: QLLoc) -> Option<SrcVar> {
         if src_tree.ret_type.is_void() {
             return None;
@@ -268,52 +207,6 @@ impl<'a> StmtCollector<'a> {
             var_type: src_tree.ret_type.clone(),
         })
     }
-
-    // fn stmt_handle_one_inner_act(
-    //     &self,
-    //     plain_stmt: &PlainStmtNode,
-    //     stmt_ptr: SharedStmtNodePtr,
-    //     func_node: &ExecFuncNode,
-    //     pu_vec: &mut Vec<ProcessUnit>,
-    //     act: &ExecAction,
-    //     ret_var_vec: &mut Vec<SrcVar>,
-    // ) -> Result<()> {
-    //     match act {
-    //         // handle func invocation
-    //         ExecAction::Func(func_act) => match func_act {
-    //             FuncAction::Call {
-    //                 func_name,
-    //                 child_ptr,
-    //                 invoc_loc_op: invoc_loc,
-    //             } => {
-    //                 let invoc_res_op = self.func_invoc_handle(
-    //                     stmt_ptr.clone(),
-    //                     func_name,
-    //                     child_ptr.clone(),
-    //                     invoc_loc.as_ref(),
-    //                     pu_vec,
-    //                 )?;
-    //                 match invoc_res_op {
-    //                     None => {}
-    //                     Some(invoc_res) => {
-    //                         todo!()
-    //                     }
-    //                 }
-    //                 todo!()
-    //             }
-    //             FuncAction::Unwind { loc } => {
-    //                 todo!()
-    //             }
-    //             _ => {
-    //                 bail!("Unexpected Func action: {:?}", func_act);
-    //             }
-    //         },
-
-    //         _ => {
-    //             bail!("Stmt Action handle: Unexpected actions")
-    //         }
-    //     }
-    // }
 
     fn stmt_handle_inner_actions(
         &self,

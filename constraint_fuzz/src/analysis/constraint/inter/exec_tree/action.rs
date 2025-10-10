@@ -241,7 +241,7 @@ impl fmt::Debug for JumpActionType {
 pub struct JumpAction {
     pub jump_variants: JumpActionType,
     pub from_loc: SrcLocEnum,
-    cond_val: bool,
+    pub cond_val: bool,
     pub dest_loc: SrcLocEnum,
 }
 
