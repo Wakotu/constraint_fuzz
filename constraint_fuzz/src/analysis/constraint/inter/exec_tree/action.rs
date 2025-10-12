@@ -706,6 +706,9 @@ impl fmt::Debug for SelectAction {
 }
 
 impl SelectAction {
+    pub fn get_loc(&self) -> &SrcLocEnum {
+        &self.loc
+    }
     pub fn parse_select_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
         const SEL_PREFIX: &str = "Select Guard: ";
         if !line.starts_with(SEL_PREFIX) {

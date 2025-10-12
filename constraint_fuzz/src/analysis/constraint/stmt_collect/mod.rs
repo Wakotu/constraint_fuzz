@@ -18,7 +18,10 @@ use crate::{
         intra::func_src_tree::{
             builder::FuncSrcForest,
             code_query::{custom_class_query::VarType, scope_var_query::SrcVar},
-            nodes::{FuncSrcTree, PlainStmtNode, SharedStmtNodePtr, StmtNodeVariants},
+            nodes::{
+                cf_nodes::{CFStruct, IfNode},
+                FuncSrcTree, FuncSrcTreeIter, PlainStmtNode, SharedStmtNodePtr, StmtNodeVariants,
+            },
             stmts::QLLoc,
         },
         stmt_collect::inner_stmt::{ArgExpr, InnerStmtHandler, InvocSubstOpr},
@@ -30,6 +33,7 @@ use chrono::format::format;
 use clap::builder::Str;
 use color_eyre::eyre::Result;
 use eyre::bail;
+use reqwest::header::IF_NONE_MATCH;
 
 pub type StmtStr = String;
 
@@ -83,7 +87,6 @@ impl Ord for InnerCondRec {
 pub struct ProcessUnit {
     pub content: String,
     pub valid_var_vec: Vec<SrcVar>,
-    // TODO: to be added
     pub cond_rec_vec: Vec<InnerCondRec>,
     pub variants: ProcessUnitVariant,
 }
@@ -208,7 +211,7 @@ impl<'a> StmtCollector<'a> {
         })
     }
 
-    fn stmt_handle_inner_actions(
+    fn plain_stmt_handle(
         &self,
         plain_stmt: &PlainStmtNode,
         stmt_ptr: SharedStmtNodePtr,
@@ -218,15 +221,58 @@ impl<'a> StmtCollector<'a> {
     ) -> Result<()> {
         let mut act = func_node.get_act_at_res(*act_idx)?;
 
-        let mut handler = InnerStmtHandler::new(stmt_ptr.clone(), self)?;
+        let mut handler = InnerStmtHandler::from_stmt_ptr(stmt_ptr.clone(), self)?;
         while plain_stmt.action_inner(act)? {
             handler.act_handle(act)?;
             // act move forward
             *act_idx += 1;
             act = func_node.get_act_at_res(*act_idx)?;
         }
-        handler.update_pu(pu_vec);
+        handler.update_pu(pu_vec)?;
         Ok(())
+    }
+
+    fn if_struct_handle(
+        &self,
+        if_node: &IfNode,
+        stmt_ptr: SharedStmtNodePtr,
+        func_node: &ExecFuncNode,
+        pu_vec: &mut Vec<ProcessUnit>,
+        act_idx: &mut usize,
+    ) -> Result<SharedStmtNodePtr> {
+        let cond_expr = if_node.get_cond_expr();
+
+        // inner expression handle
+        let mut handler = InnerStmtHandler::new(cond_expr.get_loc(), stmt_ptr.clone(), self)?;
+        let outer_act = loop {
+            let act = func_node.get_act_at_res(*act_idx)?;
+            let (is_inner, is_outer) = cond_expr.cond_expr_act_match(act)?;
+            if !is_inner {
+                break act;
+            }
+            handler.act_handle(act)?;
+            if is_outer {
+                break act;
+            }
+            // update act
+            *act_idx += 1;
+        };
+        handler.update_pu(pu_vec)?;
+
+        // current action would be always an outer action
+        let next_ptr_op = if_node.get_next_ptr(outer_act)?;
+        let next_ptr = match next_ptr_op {
+            Some(ptr) => ptr,
+            None => {
+                let next_ptr_op = FuncSrcTreeIter::get_next_sibling_ptr(stmt_ptr.clone())?;
+                match next_ptr_op {
+                    None => bail!("If Struct Handle: Failed to find next sibling ptr"),
+                    Some(p) => p,
+                }
+            }
+        };
+        *act_idx += 1;
+        Ok(next_ptr)
     }
 
     fn collect_intra(
@@ -272,7 +318,26 @@ impl<'a> StmtCollector<'a> {
             match &stmt_node.variants {
                 StmtNodeVariants::Block(_) => continue,
                 StmtNodeVariants::CFStruct(cf_struct) => {
-                    // TODO: core logic: need to invoke `iter.select()` here
+                    let next_stmt_ptr = match cf_struct {
+                        CFStruct::If(if_node) => self.if_struct_handle(
+                            if_node,
+                            stmt_ptr.clone(),
+                            &func_node,
+                            &mut pu_vec,
+                            &mut act_idx,
+                        )?,
+                        CFStruct::While(while_node) => {
+                            todo!()
+                        }
+                        CFStruct::Switch(switch_node) => {
+                            todo!()
+                        }
+                        CFStruct::For(for_node) => {
+                            todo!()
+                        }
+                    };
+
+                    iter.update_in_cf(next_stmt_ptr);
                 }
                 StmtNodeVariants::Plain(plain_stmt) => {
                     // handle function imigrate and plain string collection.
@@ -295,7 +360,7 @@ impl<'a> StmtCollector<'a> {
                         return Ok((pu_vec, ret_var_op));
                     }
 
-                    self.stmt_handle_inner_actions(
+                    self.plain_stmt_handle(
                         plain_stmt,
                         stmt_ptr.clone(),
                         &func_node,

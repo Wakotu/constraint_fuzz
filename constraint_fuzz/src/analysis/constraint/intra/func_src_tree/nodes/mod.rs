@@ -26,7 +26,7 @@ use crate::analysis::constraint::{
             scope_var_query::{FuncScopeMap, SrcVar, StmtScopeMap},
             switch_query::CaseMap,
         },
-        nodes::cf_mod::{CFStruct, CasePtrMap},
+        nodes::cf_nodes::{CFStruct, CasePtrMap},
         stmts::{
             BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, QLLoc, StmtType, SwitchStmt,
             WhileStmt,
@@ -34,6 +34,8 @@ use crate::analysis::constraint::{
     },
     stmt_collect::ProcessUnit,
 };
+
+pub mod cf_nodes;
 
 pub enum StmtNodeVariants {
     Block(BlockStmtNode),
@@ -55,6 +57,14 @@ pub struct StmtNode {
 }
 
 impl StmtNode {
+    pub fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
+        match &self.variants {
+            StmtNodeVariants::Block(block_node) => block_node.src_loc_inner(src_loc),
+            StmtNodeVariants::CFStruct(cf_node) => cf_node.src_loc_inner(src_loc),
+            StmtNodeVariants::Plain(plain_node) => plain_node.src_loc_inner(src_loc),
+        }
+    }
+
     pub fn get_loc(&self) -> &QLLoc {
         match &self.variants {
             StmtNodeVariants::Block(block_node) => &block_node.loc,
@@ -75,6 +85,13 @@ impl StmtNode {
                 wp.upgrade()
                     .expect("Stmt Node Pointer: Parent pointer has been dropped"),
             ),
+        }
+    }
+
+    pub fn is_cf_node(&self) -> bool {
+        match self.variants {
+            StmtNodeVariants::CFStruct(_) => true,
+            _ => false,
         }
     }
 
@@ -151,11 +168,11 @@ impl StmtNode {
             Some(var_vec) => var_vec.clone(),
         };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::CFStruct(CFStruct::If(cf_mod::IfNode {
+            variants: StmtNodeVariants::CFStruct(CFStruct::If(cf_nodes::IfNode {
                 loc: if_stmt.loc.clone(),
                 cond_expr: SrcExpr::from_loc_and_invocs(&if_stmt.cond_loc, func_invoc_map),
-                then_blk: then_ptr,
-                else_blk: else_ptr,
+                then_ptr,
+                else_ptr_op: else_ptr,
             })),
             parent_ptr_op: None,
             parent_idx_op: None,
@@ -175,7 +192,7 @@ impl StmtNode {
             Some(var_vec) => var_vec.clone(),
         };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::CFStruct(CFStruct::Switch(cf_mod::SwitchNode {
+            variants: StmtNodeVariants::CFStruct(CFStruct::Switch(cf_nodes::SwitchNode {
                 loc: switch_stmt.loc.clone(),
                 expr_loc: SrcExpr::from_loc_and_invocs(&switch_stmt.expr_loc, func_invoc_map),
                 case_ptr_map,
@@ -199,7 +216,7 @@ impl StmtNode {
             Some(var_vec) => var_vec.clone(),
         };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::CFStruct(CFStruct::While(cf_mod::WhileNode {
+            variants: StmtNodeVariants::CFStruct(CFStruct::While(cf_nodes::WhileNode {
                 loc: while_stmt.loc.clone(),
                 while_type: while_stmt.while_type.clone(),
                 cond_expr: SrcExpr::from_loc_and_invocs(&while_stmt.cond_loc, func_invoc_map),
@@ -224,7 +241,7 @@ impl StmtNode {
             Some(var_vec) => var_vec.clone(),
         };
         Rc::new(RefCell::new(StmtNode {
-            variants: StmtNodeVariants::CFStruct(CFStruct::For(cf_mod::ForNode {
+            variants: StmtNodeVariants::CFStruct(CFStruct::For(cf_nodes::ForNode {
                 loc: for_stmt.loc.clone(),
                 init: match &for_stmt.init_loc {
                     None => None,
@@ -318,6 +335,7 @@ impl PlainStmtNode {
                 }
             }
             ExecAction::UBV(ubv_hit) => Ok(self.src_loc_inner(ubv_hit.get_loc())),
+            ExecAction::Select(sel_act) => Ok(self.src_loc_inner(sel_act.get_loc())),
             ExecAction::Func(FuncAction::Call(call_act)) => {
                 match &call_act.invoc_loc_op {
                     None => {
@@ -360,6 +378,13 @@ pub struct BlockStmtNode {
 }
 
 impl BlockStmtNode {
+    fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
+        match self.loc.compare_src_loc(src_loc) {
+            None => false,
+            Some(ord) => ord == Ordering::Equal,
+        }
+    }
+
     pub fn stmts_len(&self) -> usize {
         self.stmts.len()
     }
@@ -370,59 +395,6 @@ impl BlockStmtNode {
         } else {
             Some(Rc::clone(&self.stmts[0]))
         }
-    }
-}
-
-pub mod cf_mod {
-
-    use std::collections::HashMap;
-
-    use my_macros::EquivByLoc;
-
-    use crate::analysis::constraint::intra::func_src_tree::{
-        nodes::{SharedStmtNodePtr, SrcExpr},
-        stmts::{QLLoc, WhileType},
-    };
-
-    #[derive(EquivByLoc)]
-    pub struct IfNode {
-        pub loc: QLLoc,
-        pub cond_expr: SrcExpr,
-        pub then_blk: SharedStmtNodePtr,
-        pub else_blk: Option<SharedStmtNodePtr>,
-    }
-
-    pub type CasePtrMap = HashMap<QLLoc, Vec<SharedStmtNodePtr>>;
-
-    #[derive(EquivByLoc)]
-    pub struct SwitchNode {
-        pub loc: QLLoc,
-        pub expr_loc: SrcExpr,
-        pub case_ptr_map: CasePtrMap,
-    }
-
-    #[derive(EquivByLoc)]
-    pub struct WhileNode {
-        pub loc: QLLoc,
-        pub while_type: WhileType,
-        pub cond_expr: SrcExpr,
-        pub body: SharedStmtNodePtr,
-    }
-
-    #[derive(EquivByLoc)]
-    pub struct ForNode {
-        pub loc: QLLoc,
-        pub init: Option<SrcExpr>,
-        pub cond: Option<SrcExpr>,
-        pub update: Option<SrcExpr>,
-        pub body: SharedStmtNodePtr,
-    }
-
-    pub enum CFStruct {
-        If(IfNode),
-        Switch(SwitchNode),
-        While(WhileNode),
-        For(ForNode),
     }
 }
 
@@ -498,7 +470,7 @@ impl FuncSrcTreeIter {
         unimplemented!()
     }
 
-    fn get_next_sibling_ptr(
+    fn get_next_sibling_ptr_impl(
         par_ptr: SharedStmtNodePtr,
         cur_ptr: SharedStmtNodePtr,
     ) -> Option<SharedStmtNodePtr> {
@@ -542,6 +514,20 @@ impl FuncSrcTreeIter {
         }
     }
 
+    pub fn get_next_sibling_ptr(cur_ptr: SharedStmtNodePtr) -> Result<Option<SharedStmtNodePtr>> {
+        let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
+            None => return Ok(None),
+            Some(wp) => match wp.upgrade() {
+                None => bail!("Failed to upgrade weak parent pointer"),
+                Some(p) => p,
+            },
+        };
+        Ok(Self::get_next_sibling_ptr_impl(
+            par_ptr.clone(),
+            cur_ptr.clone(),
+        ))
+    }
+
     pub fn get_next_ptr(&self) -> Result<Option<SharedStmtNodePtr>> {
         let cur_ptr = match &self.cur_ptr_op {
             None => return Ok(None),
@@ -555,17 +541,18 @@ impl FuncSrcTreeIter {
             }
             StmtNodeVariants::Plain(_) => {
                 let mut cur_ptr = cur_ptr.clone();
-                let mut par_ptr;
+                // let mut par_ptr;
                 loop {
                     // get next sibling ptr
-                    par_ptr = match &cur_ptr.borrow().parent_ptr_op {
+                    let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
                         None => return Ok(None),
                         Some(wp) => match wp.upgrade() {
-                            None => return Ok(None),
+                            None => bail!("FuncSrcTree Iter next: Failed to upgrade father ptr"),
                             Some(p) => p,
                         },
                     };
-                    if let Some(ptr) = Self::get_next_sibling_ptr(par_ptr.clone(), cur_ptr.clone())
+                    if let Some(ptr) =
+                        Self::get_next_sibling_ptr_impl(par_ptr.clone(), cur_ptr.clone())
                     {
                         return Ok(Some(ptr));
                     }
@@ -579,6 +566,10 @@ impl FuncSrcTreeIter {
             }
         }
     }
+
+    pub fn update_in_cf(&mut self, cf_next_ptr: SharedStmtNodePtr) {
+        self.cur_ptr_op = Some(cf_next_ptr);
+    }
 }
 
 impl Iterator for FuncSrcTreeIter {
@@ -588,6 +579,16 @@ impl Iterator for FuncSrcTreeIter {
         match &self.cur_ptr_op {
             None => None,
             Some(ptr) => {
+                let is_cf = {
+                    let stmt_node = ptr.borrow();
+                    stmt_node.is_cf_node()
+                };
+
+                if is_cf {
+                    // just return current ptr and do not modify iterator state
+                    return Some(ptr.clone());
+                }
+
                 let next_ptr = self
                     .get_next_ptr()
                     .unwrap_or_else(|e| panic!("Error getting next ptr: {:?}", e));
@@ -606,6 +607,66 @@ pub struct SrcExpr {
 }
 
 impl SrcExpr {
+    fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
+        match self.loc.compare_src_loc(src_loc) {
+            None => false,
+            Some(ord) => ord == Ordering::Equal,
+        }
+    }
+
+    /**
+     * Returns (is_inner, is_outer)
+     * is_outer only applies to Br or MergeBr actions
+     */
+    pub fn cond_expr_act_match(&self, act: &ExecAction) -> Result<(bool, bool)> {
+        match act {
+            ExecAction::Intra(jump_act) => {
+                let val_loc_op = match &jump_act.jump_variants {
+                    JumpActionType::BrGuard { val_loc } => Some(val_loc),
+                    JumpActionType::MergeBrGuard => None,
+                    jump_var => bail!(
+                        "Cond Expression should not match with jump action type: {:?}",
+                        jump_var
+                    ),
+                };
+                let dest_loc = &jump_act.dest_loc;
+                let is_inner = match val_loc_op {
+                    None => false,
+                    Some(val_loc) => self.src_loc_inner(val_loc),
+                };
+                let is_outer = !self.src_loc_inner(dest_loc);
+                Ok((is_inner, is_outer))
+            }
+            ExecAction::UBV(ubv_hit) => {
+                let val_loc = ubv_hit.get_loc();
+                let val_inner = self.src_loc_inner(val_loc);
+                Ok((val_inner, false))
+            }
+            ExecAction::Select(sel_act) => {
+                let val_loc = sel_act.get_loc();
+                let val_inner = self.src_loc_inner(val_loc);
+                Ok((val_inner, false))
+            }
+            ExecAction::Func(FuncAction::Call(call_act)) => {
+                match &call_act.invoc_loc_op {
+                    None => {
+                        log::warn!("Stmt action inner check: Function call action without invocation location");
+                        Ok((false, false))
+                    }
+                    Some(loc) => Ok((self.src_loc_inner(loc), false)),
+                }
+            }
+            act => bail!(
+                "Cond Expression should not match with action type: {:?}",
+                act
+            ),
+        }
+    }
+
+    pub fn get_loc(&self) -> &QLLoc {
+        &self.loc
+    }
+
     pub fn get_expr_str(&self) -> Result<String> {
         self.loc.get_content()
     }

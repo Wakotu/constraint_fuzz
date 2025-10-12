@@ -355,35 +355,47 @@ impl CondStateVec {
     }
 }
 
-// TODO: add methods
 pub struct InnerStmtHandler<'a> {
+    // derive from ql_loc of specified expr/stmt
     stmt_info: StmtStrInfo,
-    invoc_sub_recs: InvocSubRecs,
-    stmt_ptr: SharedStmtNodePtr,
+    // stmt_ptr: SharedStmtNodePtr,
     collector: &'a StmtCollector<'a>,
+    // derive from stmt_ptr
     live_var_vec: Vec<SrcVar>,
+    // middle state
+    invoc_sub_recs: InvocSubRecs,
     cond_state_vec: CondStateVec,
     // result field
     pu_vec: Vec<ProcessUnit>,
 }
 
 impl<'a> InnerStmtHandler<'a> {
-    // construction method
-    pub fn new(stmt_ptr: SharedStmtNodePtr, collector: &'a StmtCollector) -> Result<Self> {
-        let stmt_node = stmt_ptr.borrow();
-        let stmt_loc = stmt_node.get_loc();
-        let stmt_info = StmtStrInfo::from_qlloc(stmt_loc)?;
+    pub fn new(
+        expr_loc: &QLLoc,
+        stmt_ptr: SharedStmtNodePtr,
+        collector: &'a StmtCollector,
+    ) -> Result<Self> {
+        let stmt_info = StmtStrInfo::from_qlloc(expr_loc)?;
         let live_var_vec = SrcVar::get_live_var(stmt_ptr.clone());
 
         Ok(Self {
             stmt_info,
             invoc_sub_recs: InvocSubRecs::new(),
-            stmt_ptr: stmt_ptr.clone(),
+            // stmt_ptr: stmt_ptr.clone(),
             collector,
             live_var_vec,
             cond_state_vec: CondStateVec::new(),
             pu_vec: vec![],
         })
+    }
+    // construction method
+    pub fn from_stmt_ptr(
+        stmt_ptr: SharedStmtNodePtr,
+        collector: &'a StmtCollector,
+    ) -> Result<Self> {
+        let stmt_node = stmt_ptr.borrow();
+        let stmt_loc = stmt_node.get_loc();
+        Self::new(stmt_loc, stmt_ptr.clone(), collector)
     }
 
     fn arg_expr_collect(&mut self, left_idx: usize) -> Result<(Vec<ArgExpr>, usize)> {
