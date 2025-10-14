@@ -19,7 +19,7 @@ use crate::analysis::constraint::{
     },
 };
 use color_eyre::eyre::Result;
-use eyre::bail;
+use eyre::{bail, eyre};
 
 pub struct ProjectInfo {
     pub func_info_table: FuncInfoTable,
@@ -217,13 +217,12 @@ impl<'a> SrcForestBuilder<'a> {
                             stmt_scope_map,
                         );
                         // parent ptr setting
-                        for (case_loc, case_ptr_vec) in case_ptr_map.into_iter() {
-                            for (idx, case_ptr) in case_ptr_vec.into_iter().enumerate() {
-                                case_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
-                                case_ptr.borrow_mut().parent_idx_op = Some(idx);
-                                case_ptr.borrow_mut().parent_case_loc_op = Some(case_loc.clone());
-                            }
-                        }
+                        let stmt_node = cur_ptr.borrow();
+                        let switch_node = stmt_node.get_swtich_node().ok_or_else(|| {
+                            eyre!("Build Error: no switch node inside a switch pointer")
+                        })?;
+                        switch_node.set_parent_state_for_caseptrs(cur_ptr.clone());
+                        drop(stmt_node);
                         Ok(cur_ptr)
                     } else {
                         bail!(

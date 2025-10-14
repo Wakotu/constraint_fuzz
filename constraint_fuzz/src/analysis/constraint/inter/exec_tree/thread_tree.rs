@@ -1,9 +1,11 @@
 use color_eyre::eyre::Result;
 use dot_writer::{Attributes, DotWriter, Style};
 use eyre::bail;
+use serde_json::map::Iter;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
+use std::iter::Iterator;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::{
@@ -111,10 +113,57 @@ impl Iterator for SubFuncIter {
     }
 }
 
+pub struct FuncActIter<'a> {
+    func_node: &'a ExecFuncNode,
+    idx: usize,
+}
+
+impl<'a> FuncActIter<'a> {
+    fn is_nostart_loopout(&self) -> bool {
+        let act = match self.func_node.get_act_at(self.idx) {
+            None => return false,
+            Some(act) => act,
+        };
+        act.is_nostart_loopout()
+    }
+
+    fn get_current_and_update(&mut self) -> Option<&'a ExecAction> {
+        let act_op = self.func_node.get_act_at(self.idx);
+
+        match act_op {
+            None => {}
+            Some(_) => {
+                self.idx += 1;
+            }
+        }
+        act_op
+    }
+}
+
+impl<'a> Iterator for FuncActIter<'a> {
+    type Item = &'a ExecAction;
+    fn next(&mut self) -> Option<Self::Item> {
+        // skip nostart loop out action
+        while self.is_nostart_loopout() {
+            self.idx += 1;
+        }
+        self.get_current_and_update()
+    }
+}
+
 pub struct ExecFuncNode {
     // node_type field which contains func name
     node_type: FuncEntryType,
     pub data: Vec<ExecAction>,
+}
+
+impl ExecFuncNode {
+    pub fn iter(&self) -> FuncActIter {
+        FuncActIter {
+            func_node: self,
+            idx: 0,
+        }
+    }
 }
 
 impl fmt::Debug for ExecFuncNode {

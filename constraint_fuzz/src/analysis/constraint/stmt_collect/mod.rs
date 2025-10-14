@@ -3,14 +3,12 @@ use std::{
     hash::Hash,
 };
 
-pub mod inner_stmt;
-
 use crate::{
     analysis::constraint::{
         inter::{
             exec_tree::{
                 action::{ExecAction, FuncAction, LoopAction, RecurAction},
-                thread_tree::{ExecFuncNode, SharedFuncNodePtr},
+                thread_tree::{ExecFuncNode, FuncActIter, SharedFuncNodePtr},
                 ExecForest,
             },
             loc::SrcLocEnum,
@@ -19,10 +17,11 @@ use crate::{
             builder::FuncSrcForest,
             code_query::{custom_class_query::VarType, scope_var_query::SrcVar},
             nodes::{
-                cf_nodes::{CFStruct, IfNode},
-                FuncSrcTree, FuncSrcTreeIter, PlainStmtNode, SharedStmtNodePtr, StmtNodeVariants,
+                cf_nodes::{CFNode, IfNode, WhileNode},
+                FuncSrcTree, FuncSrcTreeIter, PlainStmtNode, SharedStmtNodePtr, SrcExpr,
+                StmtNodeVariants,
             },
-            stmts::QLLoc,
+            stmts::{QLLoc, WhileType},
         },
         stmt_collect::inner_stmt::{ArgExpr, InnerStmtHandler, InvocSubstOpr},
     },
@@ -34,6 +33,10 @@ use clap::builder::Str;
 use color_eyre::eyre::Result;
 use eyre::bail;
 use reqwest::header::IF_NONE_MATCH;
+
+mod inner_stmt;
+mod loop_handle;
+mod switch_handle;
 
 pub type StmtStr = String;
 
@@ -154,6 +157,14 @@ impl ProcessUnit {
             variants: ProcessUnitVariant::Plain {},
         }
     }
+
+    pub fn concat_cond_pu(expr_pu: ProcessUnit, val_lit: String) -> Self {
+        let mut pu = expr_pu;
+        let cond_str = format!(" == {}", val_lit);
+        pu.content.push_str(&cond_str);
+        pu.variants = ProcessUnitVariant::CondExpr { val: true };
+        pu
+    }
 }
 
 pub struct StmtCollector<'a> {
@@ -191,13 +202,7 @@ impl<'a> StmtCollector<'a> {
     }
 
     fn allow_after(stmt_ptr: SharedStmtNodePtr, act: &ExecAction) -> bool {
-        let loop_act = match act {
-            ExecAction::Loop(loop_act) => loop_act,
-            _ => {
-                return false;
-            }
-        };
-        loop_act.is_loop_entry() && Self::is_inside_loop(stmt_ptr)
+        act.is_loop_entry() && Self::is_inside_loop(stmt_ptr)
     }
 
     fn create_ret_var(src_tree: &FuncSrcTree, ret_loc: QLLoc) -> Option<SrcVar> {
@@ -215,37 +220,68 @@ impl<'a> StmtCollector<'a> {
         &self,
         plain_stmt: &PlainStmtNode,
         stmt_ptr: SharedStmtNodePtr,
-        func_node: &ExecFuncNode,
+        act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-        act_idx: &mut usize,
     ) -> Result<()> {
-        let mut act = func_node.get_act_at_res(*act_idx)?;
-
         let mut handler = InnerStmtHandler::from_stmt_ptr(stmt_ptr.clone(), self)?;
-        while plain_stmt.action_inner(act)? {
+        loop {
+            let act_op = act_iter.next();
+            let act = match act_op {
+                None => break,
+                Some(act) => act,
+            };
+
+            if !plain_stmt.act_inner(act)? {
+                break;
+            }
             handler.act_handle(act)?;
-            // act move forward
-            *act_idx += 1;
-            act = func_node.get_act_at_res(*act_idx)?;
         }
         handler.update_pu(pu_vec)?;
         Ok(())
     }
 
-    fn if_struct_handle(
+    fn cfseg_handle(
         &self,
-        if_node: &IfNode,
+        cfseg: &SrcExpr,
         stmt_ptr: SharedStmtNodePtr,
-        func_node: &ExecFuncNode,
+        act_iter: &'a mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-        act_idx: &mut usize,
-    ) -> Result<SharedStmtNodePtr> {
-        let cond_expr = if_node.get_cond_expr();
+    ) -> Result<()> {
+        let mut handler = InnerStmtHandler::new(cfseg.get_loc(), stmt_ptr.clone(), self)?;
 
-        // inner expression handle
+        loop {
+            let act_op = act_iter.next();
+            let act = match act_op {
+                None => break,
+                Some(act) => act,
+            };
+
+            if !cfseg.act_inner(act)? {
+                break;
+            }
+            handler.act_handle(act)?;
+        }
+        handler.update_pu(pu_vec)?;
+        Ok(())
+    }
+
+    fn cond_expr_handle(
+        &self,
+        cond_expr: &SrcExpr,
+        stmt_ptr: SharedStmtNodePtr,
+        act_iter: &'a mut FuncActIter,
+        pu_vec: &mut Vec<ProcessUnit>,
+    ) -> Result<&'a ExecAction> {
         let mut handler = InnerStmtHandler::new(cond_expr.get_loc(), stmt_ptr.clone(), self)?;
         let outer_act = loop {
-            let act = func_node.get_act_at_res(*act_idx)?;
+            let act_op = act_iter.next();
+            // all acts here should be either inner act or outer act.
+            let act = match act_op {
+                None => bail!(
+                    "Cond Expr Handle: inner and outer struct should not exceed function action idx"
+                ),
+                Some(act) => act,
+            };
             let (is_inner, is_outer) = cond_expr.cond_expr_act_match(act)?;
             if !is_inner {
                 break act;
@@ -254,42 +290,46 @@ impl<'a> StmtCollector<'a> {
             if is_outer {
                 break act;
             }
-            // update act
-            *act_idx += 1;
         };
+        // NOTE: here act_idx should lies in the one after outer_act.
         handler.update_pu(pu_vec)?;
 
-        // current action would be always an outer action
-        let next_ptr_op = if_node.get_next_ptr(outer_act)?;
-        let next_ptr = match next_ptr_op {
-            Some(ptr) => ptr,
-            None => {
-                let next_ptr_op = FuncSrcTreeIter::get_next_sibling_ptr(stmt_ptr.clone())?;
-                match next_ptr_op {
-                    None => bail!("If Struct Handle: Failed to find next sibling ptr"),
-                    Some(p) => p,
-                }
-            }
-        };
-        *act_idx += 1;
-        Ok(next_ptr)
+        Ok(outer_act)
     }
 
-    fn collect_intra(
+    fn if_struct_handle(
         &self,
-        src_tree: &FuncSrcTree,
-        exec_node_ptr: SharedFuncNodePtr,
-    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>)> {
-        let exec_func = exec_node_ptr.borrow();
-        let mut act_idx: usize = 0;
+        if_node: &IfNode,
+        stmt_ptr: SharedStmtNodePtr,
+        act_iter: &mut FuncActIter,
+        pu_vec: &mut Vec<ProcessUnit>,
+    ) -> Result<Option<SharedStmtNodePtr>> {
+        let cond_expr = if_node.get_cond_expr();
+
+        // inner expression handle
+        let outer_act = self.cond_expr_handle(cond_expr, stmt_ptr.clone(), act_iter, pu_vec)?;
+
+        // current action would be always an outer action
+        let body_ptr_op = if_node.get_dest_body(outer_act)?;
+        // NOTE: None determines end of the Func Src Tree
+        let next_ptr_op = match body_ptr_op {
+            Some(ptr) => Some(ptr),
+            None => FuncSrcTreeIter::get_after_next_ptr(stmt_ptr.clone())?,
+        };
+        Ok(next_ptr_op)
+    }
+
+    fn check_recur_lock(func_node: &ExecFuncNode) -> Result<bool> {
+        let mut act_iter = func_node.iter();
+
+        // let mut act_idx: usize = 0;
 
         // check for recur locked at the beginning
-        let first_act = exec_func
-            .get_act_at(act_idx)
+        let first_act = act_iter
+            .next()
             .ok_or_else(|| eyre::eyre!("Function node should have at least one action"))?;
         if let ExecAction::Recur(RecurAction::Locked) = first_act {
-            act_idx += 1;
-            let second_act = exec_func.get_act_at(act_idx).ok_or_else(|| {
+            let second_act = act_iter.next().ok_or_else(|| {
                 eyre::eyre!(
                     "Function node should have at least two actions when first is Recur Locked"
                 )
@@ -298,17 +338,31 @@ impl<'a> StmtCollector<'a> {
                 matches!(second_act, ExecAction::Recur(RecurAction::Released)),
                 "Second Action should be Recur Released action"
             );
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn collect_intra(
+        &self,
+        src_tree: &FuncSrcTree,
+        exec_node_ptr: SharedFuncNodePtr,
+    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>)> {
+        let func_node = exec_node_ptr.borrow();
+        if Self::check_recur_lock(&func_node)? {
             return Ok((vec![], None));
         }
 
-        let mut pu_vec: Vec<ProcessUnit> = vec![];
-        let func_node = exec_node_ptr.borrow();
+        let mut act_iter = func_node.iter();
 
-        let mut iter = src_tree.iter();
+        let mut pu_vec: Vec<ProcessUnit> = vec![];
+
+        let mut src_iter = src_tree.iter();
         let mut stmt_ptr_op;
         loop {
             // iteration logic
-            stmt_ptr_op = iter.next();
+            stmt_ptr_op = src_iter.next();
             let stmt_ptr = match stmt_ptr_op {
                 Some(ptr) => ptr,
                 None => break,
@@ -317,27 +371,35 @@ impl<'a> StmtCollector<'a> {
 
             match &stmt_node.variants {
                 StmtNodeVariants::Block(_) => continue,
-                StmtNodeVariants::CFStruct(cf_struct) => {
-                    let next_stmt_ptr = match cf_struct {
-                        CFStruct::If(if_node) => self.if_struct_handle(
+                StmtNodeVariants::CF(cf_struct) => {
+                    let next_ptr_op = match cf_struct {
+                        CFNode::If(if_node) => self.if_struct_handle(
                             if_node,
                             stmt_ptr.clone(),
-                            &func_node,
+                            &mut act_iter,
                             &mut pu_vec,
-                            &mut act_idx,
                         )?,
-                        CFStruct::While(while_node) => {
-                            todo!()
-                        }
-                        CFStruct::Switch(switch_node) => {
-                            todo!()
-                        }
-                        CFStruct::For(for_node) => {
-                            todo!()
-                        }
+                        CFNode::While(while_node) => self.while_node_handle(
+                            while_node,
+                            stmt_ptr.clone(),
+                            &mut act_iter,
+                            &mut pu_vec,
+                        )?,
+                        CFNode::Switch(switch_node) => self.switch_node_handle(
+                            switch_node,
+                            stmt_ptr.clone(),
+                            &mut act_iter,
+                            &mut pu_vec,
+                        )?,
+                        CFNode::For(for_node) => self.for_node_handle(
+                            for_node,
+                            stmt_ptr.clone(),
+                            &mut act_iter,
+                            &mut pu_vec,
+                        )?,
                     };
 
-                    iter.update_in_cf(next_stmt_ptr);
+                    src_iter.update_in_cf(next_ptr_op);
                 }
                 StmtNodeVariants::Plain(plain_stmt) => {
                     // handle function imigrate and plain string collection.
@@ -363,9 +425,8 @@ impl<'a> StmtCollector<'a> {
                     self.plain_stmt_handle(
                         plain_stmt,
                         stmt_ptr.clone(),
-                        &func_node,
+                        &mut act_iter,
                         &mut pu_vec,
-                        &mut act_idx,
                     )?;
                 }
             }

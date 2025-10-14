@@ -206,19 +206,19 @@ impl FuncAction {
 
 #[derive(Clone)]
 pub enum JumpActionType {
-    BrGuard { val_loc: SrcLocEnum },
-    MergeBrGuard,
-    SwitchGuard,
-    IndirectGuard,
+    Br { val_loc: SrcLocEnum },
+    MergeBr,
+    Switch,
+    IndirectBr,
 }
 
 impl JumpActionType {
     pub fn from_simple_prefix(prefix: &str) -> Option<Self> {
         match prefix {
             // Only Merge Br Guard is in simple version
-            "Merge Br Guard:" => Some(JumpActionType::MergeBrGuard),
-            "Switch Guard:" => Some(JumpActionType::SwitchGuard),
-            "IndirectBr Guard:" => Some(JumpActionType::IndirectGuard),
+            "Merge Br Guard:" => Some(JumpActionType::MergeBr),
+            "Switch Guard:" => Some(JumpActionType::Switch),
+            "IndirectBr Guard:" => Some(JumpActionType::IndirectBr),
             _ => None,
         }
     }
@@ -227,12 +227,12 @@ impl JumpActionType {
 impl fmt::Debug for JumpActionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JumpActionType::BrGuard { val_loc } => {
+            JumpActionType::Br { val_loc } => {
                 write!(f, "BrGuard with value loc {:?}", val_loc)
             }
-            JumpActionType::MergeBrGuard => write!(f, "MergeBrGuard"),
-            JumpActionType::SwitchGuard => write!(f, "SwitchGuard"),
-            JumpActionType::IndirectGuard => write!(f, "IndirectGuard"),
+            JumpActionType::MergeBr => write!(f, "MergeBrGuard"),
+            JumpActionType::Switch => write!(f, "SwitchGuard"),
+            JumpActionType::IndirectBr => write!(f, "IndirectGuard"),
         }
     }
 }
@@ -248,12 +248,12 @@ pub struct JumpAction {
 impl JumpAction {
     fn get_dot_id(&self, cnt: usize) -> String {
         match self.jump_variants {
-            JumpActionType::BrGuard { .. } => {
+            JumpActionType::Br { .. } => {
                 format!("Branch_Guard_Action_{}", cnt)
             }
-            JumpActionType::MergeBrGuard => format!("Branch_Merge_Guard_Action_{}", cnt),
-            JumpActionType::SwitchGuard => format!("Switch_Guard_Action_{}", cnt),
-            JumpActionType::IndirectGuard => format!("Indirect_Branch_Guard_Action_{}", cnt),
+            JumpActionType::MergeBr => format!("Branch_Merge_Guard_Action_{}", cnt),
+            JumpActionType::Switch => format!("Switch_Guard_Action_{}", cnt),
+            JumpActionType::IndirectBr => format!("Indirect_Branch_Guard_Action_{}", cnt),
         }
     }
 }
@@ -332,7 +332,7 @@ impl JumpAction {
 
             // parse value hit
             let va_loc = SrcLocEnum::from_str(value_hit_str)?;
-            let br_act_type = JumpActionType::BrGuard { val_loc: va_loc };
+            let br_act_type = JumpActionType::Br { val_loc: va_loc };
 
             // parse intra action
             let br_act = JumpAction::from_slice(intra_act_str, br_act_type)?;
@@ -422,27 +422,54 @@ enum LoopEntryType {
 }
 
 #[derive(Clone)]
-enum LoopEndType {
+enum LoopOutType {
     Out { count: usize },
     NoStart,
 }
 
 #[derive(Clone)]
-enum LoopActionType {
-    LoopEntry {
-        count: usize,
-        entry_type: LoopEntryType,
-    },
-    LoopEnd {
-        out_loc: SrcLocEnum,
-        end_type: LoopEndType,
-    },
+pub struct LoopEntryAct {
+    count: usize,
+    entry_type: LoopEntryType,
+}
+
+impl LoopEntryAct {
+    pub fn is_exceed(&self) -> bool {
+        match &self.entry_type {
+            LoopEntryType::Exceed => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LoopOutAct {
+    out_loc: SrcLocEnum,
+    end_type: LoopOutType,
+}
+
+#[derive(Clone)]
+pub enum LoopActionType {
+    LoopEntry(LoopEntryAct),
+    LoopEnd(LoopOutAct),
 }
 
 #[derive(Clone)]
 pub struct LoopAction {
-    la_type: LoopActionType,
+    pub la_type: LoopActionType,
     pub header_loc: SrcLocEnum,
+}
+
+impl LoopAction {
+    pub fn is_nostart_out(&self) -> bool {
+        match &self.la_type {
+            LoopActionType::LoopEnd(loop_end) => match &loop_end.end_type {
+                LoopOutType::NoStart => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 impl LoopAction {
@@ -453,10 +480,6 @@ impl LoopAction {
     // Loop End Prefix
     const OUT_PREFIX: &'static str = "Out of Loop:";
     const NO_START_PREFIX: &'static str = "Loop end without loop start:";
-
-    pub fn is_loop_entry(&self) -> bool {
-        matches!(self.la_type, LoopActionType::LoopEntry { .. })
-    }
 
     fn parse_loop_cnt(slice: &str) -> Result<usize> {
         const LOOP_CNT_PREFIX: &str = "at count";
@@ -552,19 +575,19 @@ impl LoopAction {
         if prefix.starts_with(Self::HIT_PREFIX) {
             let (header_loc, count) = Self::parse_header_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEntry {
+                la_type: LoopActionType::LoopEntry(LoopEntryAct {
                     count,
                     entry_type: LoopEntryType::Hit,
-                },
+                }),
                 header_loc,
             });
         } else if prefix.starts_with(Self::EXCEED_PREFIX) {
             let (header_loc, count) = Self::parse_header_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEntry {
+                la_type: LoopActionType::LoopEntry(LoopEntryAct {
                     count,
                     entry_type: LoopEntryType::Exceed,
-                },
+                }),
                 header_loc,
             });
         }
@@ -573,19 +596,19 @@ impl LoopAction {
             let (header_loc, out_loc, count) =
                 Self::parse_header_out_loc_with_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEnd {
+                la_type: LoopActionType::LoopEnd(LoopOutAct {
                     out_loc,
-                    end_type: LoopEndType::Out { count },
-                },
+                    end_type: LoopOutType::Out { count },
+                }),
                 header_loc,
             });
         } else if prefix.starts_with(Self::NO_START_PREFIX) {
             let (header_loc, out_loc) = Self::parse_header_out_loc_wo_count(&line[prefix.len()..])?;
             return Ok(Self {
-                la_type: LoopActionType::LoopEnd {
+                la_type: LoopActionType::LoopEnd(LoopOutAct {
                     out_loc,
-                    end_type: LoopEndType::NoStart,
-                },
+                    end_type: LoopOutType::NoStart,
+                }),
                 header_loc,
             });
         }
@@ -602,47 +625,32 @@ impl LoopAction {
 
     pub fn get_out_loc(&self) -> Option<&SrcLocEnum> {
         match &self.la_type {
-            LoopActionType::LoopEntry {
-                count: _,
-                entry_type: _,
-            } => None,
-            LoopActionType::LoopEnd {
-                out_loc,
-                end_type: _,
-            } => Some(out_loc),
+            LoopActionType::LoopEntry(_) => None,
+            LoopActionType::LoopEnd(loop_end) => Some(&loop_end.out_loc),
         }
     }
 
     pub fn get_count(&self) -> Option<usize> {
-        match self.la_type {
-            LoopActionType::LoopEntry {
-                count,
-                entry_type: _,
-            } => Some(count),
-            LoopActionType::LoopEnd {
+        match &self.la_type {
+            LoopActionType::LoopEntry(loop_entry) => Some(loop_entry.count),
+            LoopActionType::LoopEnd(LoopOutAct {
                 out_loc: _,
-                end_type: LoopEndType::Out { count },
-            } => Some(count),
+                end_type: LoopOutType::Out { count },
+            }) => Some(*count),
             _ => None,
         }
     }
 
     pub fn get_type_name(&self) -> &'static str {
         match &self.la_type {
-            LoopActionType::LoopEntry {
-                count: _,
-                entry_type,
-            } => match entry_type {
+            LoopActionType::LoopEntry(loop_entry) => match &loop_entry.entry_type {
                 LoopEntryType::Exceed => "LoopEntryExceed",
                 LoopEntryType::Hit => "LoopEntryHit",
             },
 
-            LoopActionType::LoopEnd {
-                out_loc: _,
-                end_type,
-            } => match end_type {
-                LoopEndType::NoStart => "LoopEndNoStart",
-                LoopEndType::Out { .. } => "LoopEndOut",
+            LoopActionType::LoopEnd(loop_end) => match &loop_end.end_type {
+                LoopOutType::NoStart => "LoopEndNoStart",
+                LoopOutType::Out { .. } => "LoopEndOut",
             },
         }
     }
@@ -750,9 +758,80 @@ pub enum ExecAction {
 }
 
 impl ExecAction {
+    pub fn get_switch_act(&self) -> Option<&JumpAction> {
+        match self {
+            ExecAction::Intra(jump_act) => match jump_act.jump_variants {
+                JumpActionType::Switch => Some(jump_act),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn get_outer_destloc(&self) -> Result<&SrcLocEnum> {
+        let jump_act = match self {
+            ExecAction::Intra(jump_act) => jump_act,
+            act => bail!(
+                "Cond Expr Outer action of If Node should not be of action type {:?}",
+                act
+            ),
+        };
+
+        let dest_loc = match &jump_act.jump_variants {
+            JumpActionType::Br { val_loc: _ } => &jump_act.dest_loc,
+            JumpActionType::MergeBr => &jump_act.dest_loc,
+            jump_var => bail!(
+                "Cond Expr Outer action of If Node should not be of action type {:?}",
+                jump_var
+            ),
+        };
+        Ok(dest_loc)
+    }
+
     /**
      * Statement-Action match related methods
      */
+
+    pub fn get_loopentry_act(&self) -> Option<&LoopEntryAct> {
+        match self {
+            Self::Loop(loop_act) => match &loop_act.la_type {
+                LoopActionType::LoopEntry(act) => Some(act),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn is_normal_loopend(&self) -> bool {
+        match self {
+            Self::Loop(loop_act) => match &loop_act.la_type {
+                LoopActionType::LoopEnd(end_act) => match &end_act.end_type {
+                    LoopOutType::Out { count: _ } => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_loop_entry(&self) -> bool {
+        match self {
+            Self::Loop(loop_act) => match loop_act.la_type {
+                LoopActionType::LoopEntry(_) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_nostart_loopout(&self) -> bool {
+        let loop_act = match self {
+            Self::Loop(loop_act) => loop_act,
+            _ => return false,
+        };
+        loop_act.is_nostart_out()
+    }
 
     pub fn get_match_loc(&self) -> Option<&SrcLocEnum> {
         match self {
@@ -780,10 +859,10 @@ impl ExecAction {
                 FuncAction::Unwind { .. } => false,
             },
             ExecAction::Intra(jump_act) => match jump_act.jump_variants {
-                JumpActionType::BrGuard { .. } => true,
-                JumpActionType::MergeBrGuard => true,
-                JumpActionType::SwitchGuard => false,
-                JumpActionType::IndirectGuard => false,
+                JumpActionType::Br { .. } => true,
+                JumpActionType::MergeBr => true,
+                JumpActionType::Switch => false,
+                JumpActionType::IndirectBr => false,
             },
             ExecAction::Loop(_) => false,
             ExecAction::Recur(_) => false,

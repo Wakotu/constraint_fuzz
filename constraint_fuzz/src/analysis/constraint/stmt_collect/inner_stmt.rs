@@ -371,7 +371,9 @@ pub struct InnerStmtHandler<'a> {
 
 impl<'a> InnerStmtHandler<'a> {
     pub fn new(
+        // used for action loc match
         expr_loc: &QLLoc,
+        // used for valid var query
         stmt_ptr: SharedStmtNodePtr,
         collector: &'a StmtCollector,
     ) -> Result<Self> {
@@ -388,6 +390,7 @@ impl<'a> InnerStmtHandler<'a> {
             pu_vec: vec![],
         })
     }
+
     // construction method
     pub fn from_stmt_ptr(
         stmt_ptr: SharedStmtNodePtr,
@@ -531,10 +534,10 @@ impl<'a> InnerStmtHandler<'a> {
             },
 
             ExecAction::Intra(jump_act) => match &jump_act.jump_variants {
-                JumpActionType::BrGuard { val_loc } => {
+                JumpActionType::Br { val_loc } => {
                     self.inner_cond_val_handle(val_loc, jump_act.cond_val)
                 }
-                JumpActionType::MergeBrGuard => Ok(()),
+                JumpActionType::MergeBr => Ok(()),
                 jump_act_type => bail!(
                     "Stmt Action handle: Unexpected jump action type: {:?}",
                     jump_act_type
@@ -586,7 +589,7 @@ impl<'a> InnerStmtHandler<'a> {
         Ok(cond_recs)
     }
 
-    fn append_stmt_final_pu(&mut self) -> Result<()> {
+    fn derive_final_pu(&mut self) -> Result<ProcessUnit> {
         let mut loc = 0;
         let mut next_sub_idx = self.invoc_sub_recs.next_on_loc(loc)?;
 
@@ -623,7 +626,12 @@ impl<'a> InnerStmtHandler<'a> {
             cond_rec_vec: cond_recs,
             variants: ProcessUnitVariant::Plain {},
         };
-        self.pu_vec.push(pu);
+        Ok(pu)
+    }
+
+    fn append_stmt_final_pu(&mut self) -> Result<()> {
+        let fpu = self.derive_final_pu()?;
+        self.pu_vec.push(fpu);
         Ok(())
     }
 
@@ -632,6 +640,15 @@ impl<'a> InnerStmtHandler<'a> {
         self.append_stmt_final_pu()?;
         pu_vec.extend(self.pu_vec);
         Ok(())
+    }
+
+    pub fn get_finalpu_while_update(
+        mut self,
+        pu_vec: &mut Vec<ProcessUnit>,
+    ) -> Result<ProcessUnit> {
+        let fpu = self.derive_final_pu()?;
+        pu_vec.extend(self.pu_vec);
+        Ok(fpu)
     }
 }
 

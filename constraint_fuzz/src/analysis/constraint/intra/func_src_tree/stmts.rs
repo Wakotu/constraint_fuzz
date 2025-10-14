@@ -14,7 +14,7 @@ use eyre::bail;
 
 use crate::{
     analysis::constraint::{
-        inter::loc::SrcLocEnum,
+        inter::loc::{SrcLocEnum, ValidSrcLoc},
         intra::func_src_tree::code_query::{
             for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
             if_query::{ElseRecMap, IfRecord},
@@ -79,7 +79,8 @@ impl QLLoc {
 
             if line_num == self.start_line && line_num == self.end_line {
                 // start line and end line are the same
-                let snippet = &line[self.start_column - 1..self.end_column - 1];
+                // end inclusive
+                let snippet = &line[self.start_column - 1..self.end_column];
 
                 content.push_str(snippet);
             } else if line_num == self.start_line {
@@ -89,7 +90,8 @@ impl QLLoc {
                 content.push('\n');
             } else if line_num == self.end_line {
                 // end line only
-                let snippet = &line[..self.end_column - 1];
+                // end inclusive
+                let snippet = &line[..self.end_column];
                 content.push_str(snippet);
             } else {
                 // inner line
@@ -114,6 +116,16 @@ impl QLLoc {
 }
 
 impl QLLoc {
+    /**
+     * SrcLoc comparison related
+     */
+
+    pub fn start_match(&self, src_loc: &ValidSrcLoc) -> bool {
+        self.file_path == src_loc.file_path
+            && self.start_line == src_loc.line
+            && self.start_column == src_loc.col
+    }
+
     pub fn compare_line_and_col(&self, line: usize, col: usize) -> Ordering {
         if self.start_line > line || (self.start_line == line && self.start_column > col) {
             return Ordering::Greater;
