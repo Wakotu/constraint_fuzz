@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <iostream>
+#include <llvm-19/llvm/ADT/SmallVector.h>
 #include <llvm-19/llvm/ADT/StringRef.h>
 #include <llvm-19/llvm/ADT/Twine.h>
 #include <llvm-19/llvm/Analysis/LoopAccessAnalysis.h>
@@ -41,6 +42,7 @@
 #include <string>
 #include <system_error>
 #include <unordered_set>
+#include <vector>
 
 // Only applied for Br Guard
 std::unordered_set<SrcLoc> loc_vis;
@@ -1068,39 +1070,45 @@ bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
+      std::vector<CallBase *> thread_create_calls;
+      // collect
       for (Instruction &I : BB) {
         if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
           // check if the call instruction is a thread creation function
           if (call_inst->getCalledFunction() &&
               call_inst->getCalledFunction()->getName() == "pthread_create") {
             flag = true; // found a thread creation call
-            errs() << GREEN << "[Thread Creation Instrument] " << RESET
-                   << "Thread Creation Call Instruction: ";
-            call_inst->print(errs());
-            errs() << "\n";
-
-            SrcLoc call_loc = get_src_loc(&I, M);
-            errs() << BLUE << "[Thread Creation Instrument] " << RESET
-                   << "Thread Creation Location: " << call_loc << "\n";
-
-            Value *tid_ptr = call_inst->getArgOperand(0);
-
-            std::stringstream ss;
-            ss << call_loc;
-            std::string loc = ss.str();
-
-            // create instrumentation IR builder
-            InstrumentationIRBuilder irb(I.getNextNonDebugInstruction());
-            auto loc_str = irb.CreateGlobalStringPtr(loc.c_str());
-            auto thread_guard_func_cl = get_thread_rec_func_decl(M);
-            auto inst =
-                irb.CreateCall(thread_guard_func_cl, {loc_str, tid_ptr});
-            errs() << GREEN << "[Thread Creation Instrument] " << RESET
-                   << "Thread Guard Function Call Instruction: ";
-            inst->print(errs());
-            errs() << "\n";
+            thread_create_calls.push_back(call_inst);
           }
         }
+      }
+
+      // instrument
+      for (CallBase *I : thread_create_calls) {
+        errs() << GREEN << "[Thread Creation Instrument] " << RESET
+               << "Thread Creation Call Instruction: ";
+        I->print(errs());
+        errs() << "\n";
+
+        SrcLoc call_loc = get_src_loc(I, M);
+        errs() << BLUE << "[Thread Creation Instrument] " << RESET
+               << "Thread Creation Location: " << call_loc << "\n";
+
+        Value *tid_ptr = I->getArgOperand(0);
+
+        std::stringstream ss;
+        ss << call_loc;
+        std::string loc = ss.str();
+
+        // create instrumentation IR builder
+        InstrumentationIRBuilder irb(I->getNextNonDebugInstruction());
+        auto loc_str = irb.CreateGlobalStringPtr(loc.c_str());
+        auto thread_guard_func_cl = get_thread_rec_func_decl(M);
+        auto inst = irb.CreateCall(thread_guard_func_cl, {loc_str, tid_ptr});
+        errs() << GREEN << "[Thread Creation Instrument] " << RESET
+               << "Thread Guard Function Call Instruction: ";
+        inst->print(errs());
+        errs() << "\n";
       }
     }
   }
@@ -1112,32 +1120,89 @@ bool instru_for_longjmp_invocation(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
+      std::vector<CallBase *> longjmp_calls;
+
+      // collect
       for (Instruction &I : BB) {
         if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
           // check if the call instruction is a longjmp function
           if (call_inst->getCalledFunction() &&
               call_inst->getCalledFunction()->getName() == "longjmp") {
             flag = true; // found a longjmp call
-            errs() << GREEN << "[Longjmp Invocation Instrument] " << RESET
-                   << "Longjmp Call Instruction: ";
-            call_inst->print(errs());
-            errs() << "\n";
-
-            SrcLoc call_loc = get_src_loc(&I, M);
-            errs() << BLUE << "[Longjmp Invocation Instrument] " << RESET
-                   << "Longjmp Call Location: " << call_loc << "\n";
-
-            std::stringstream ss;
-            ss << "Longjmp Invocation: " << call_loc;
-            std::string rec = ss.str();
-
-            // create instrumentation IR builder
-            InstrumentationIRBuilder irb(&I);
-            auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
-            auto content_log_func_cl = get_content_log_func_decl(M);
-            irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+            longjmp_calls.push_back(call_inst);
           }
         }
+      }
+
+      // instrument
+      for (CallBase *I : longjmp_calls) {
+        errs() << GREEN << "[Longjmp Invocation Instrument] " << RESET
+               << "Longjmp Call Instruction: ";
+        I->print(errs());
+        errs() << "\n";
+
+        SrcLoc call_loc = get_src_loc(I, M);
+        errs() << BLUE << "[Longjmp Invocation Instrument] " << RESET
+               << "Longjmp Call Location: " << call_loc << "\n";
+
+        std::stringstream ss;
+        ss << "Longjmp Invocation: " << call_loc;
+        std::string rec = ss.str();
+
+        // create instrumentation IR builder
+        InstrumentationIRBuilder irb(I);
+        auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
+        auto content_log_func_cl = get_content_log_func_decl(M);
+        irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+      }
+    }
+  }
+
+  return flag;
+}
+
+bool instru_for_setjmp_invocations(Module &M, ModuleAnalysisManager &MAM) {
+  bool flag = false;
+
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      std::vector<CallBase *> setjmp_calls;
+
+      // collect
+      for (Instruction &I : BB) {
+        if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
+          // check if the call instruction is a setjmp function
+          if (call_inst->getCalledFunction() &&
+              call_inst->getCalledFunction()->getName() == "setjmp") {
+
+            flag = true; // found a setjmp call
+            setjmp_calls.push_back(call_inst);
+          }
+        }
+      }
+
+      // instrument
+      for (CallBase *I : setjmp_calls) {
+        // compile time logs
+        errs() << GREEN << "[Setjmp Invocation Instrument] " << RESET
+               << "Setjmp Call Instruction: ";
+        I->print(errs());
+        errs() << "\n";
+
+        // parameter value colletion
+        SrcLoc call_loc = get_src_loc(I, M);
+        errs() << BLUE << "[Setjmp Invocation Instrument] " << RESET
+               << "Setjmp Call Location: " << call_loc << "\n";
+
+        std::stringstream ss;
+        ss << "Setjmp Invocation: " << call_loc;
+        std::string rec = ss.str();
+
+        // create instrumentation IR builder
+        InstrumentationIRBuilder irb(I);
+        auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
+        auto content_log_func_cl = get_content_log_func_decl(M);
+        irb.CreateCall(content_log_func_cl, {invoc_rec_str});
       }
     }
   }
@@ -1155,6 +1220,7 @@ bool MyPass::runOnModule(Module &M, ModuleAnalysisManager &MAM) {
   // flag |= instr_bool_value(M);
   flag |= instru_for_loop_context(M, MAM);
   flag |= instru_for_thread_creation(M, MAM);
+  flag |= instru_for_setjmp_invocations(M, MAM);
   flag |= instru_for_longjmp_invocation(M, MAM);
   flag |= instru_at_selections(M, MAM);
   return flag;

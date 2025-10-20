@@ -43,7 +43,19 @@ string getStmtType(Stmt stmt) {
                 else
                   if stmt instanceof ReturnStmt
                   then result = "ReturnStmt"
-                  else result = "OtherStmt"
+                  else
+                    if stmt instanceof BreakStmt
+                    then result = "BreakStmt"
+                    else
+                      if stmt instanceof ContinueStmt
+                      then result = "ContinueStmt"
+                      else
+                        if stmt instanceof GotoStmt
+                        then result = "GotoStmt"
+                        else
+                          if stmt instanceof LabelStmt
+                          then result = "LabelStmt"
+                          else result = "OtherStmt"
 }
 
 string getElementType(Element e) {

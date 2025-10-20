@@ -15,10 +15,13 @@ use eyre::bail;
 use crate::{
     analysis::constraint::{
         inter::loc::{SrcLocEnum, ValidSrcLoc},
-        intra::func_src_tree::code_query::{
-            for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
-            if_query::{ElseRecMap, IfRecord},
-            while_query::WhileRecord,
+        intra::func_src_tree::{
+            code_query::{
+                for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
+                if_query::{ElseRecMap, IfRecord},
+                while_query::WhileRecord,
+            },
+            nodes::SharedStmtNodePtr,
         },
     },
     config,
@@ -34,6 +37,10 @@ pub struct QLLoc {
 }
 
 impl QLLoc {
+    pub fn is_point_loc(&self) -> bool {
+        self.start_line == self.end_line && self.start_column == self.end_column
+    }
+
     /**
      * File IO related
      *  */
@@ -345,11 +352,21 @@ pub enum StmtType {
     Block,
     Decl,
     Expr,
+    // Upward control flow statement
     Return,
+    Break,
+    Continue,
+    Goto,
+
+    Label,
     Other,
 }
 
 impl StmtType {
+    pub fn is_label(&self) -> bool {
+        matches!(self, StmtType::Label)
+    }
+
     pub fn from_str(type_str: &str) -> Self {
         match type_str {
             "IfStmt" => StmtType::If,
@@ -361,6 +378,10 @@ impl StmtType {
             "DeclStmt" => StmtType::Decl,
             "ExprStmt" => StmtType::Expr,
             "ReturnStmt" => StmtType::Return,
+            "BreakStmt" => StmtType::Break,
+            "ContinueStmt" => StmtType::Continue,
+            "GotoStmt" => StmtType::Goto,
+            "LabelStmt" => StmtType::Label,
             _ => StmtType::Other,
         }
     }
@@ -398,6 +419,22 @@ impl BlockType {
 pub struct ChildEntry {
     pub loc: QLLoc,
     pub stmt_type: StmtType,
+}
+
+impl ChildEntry {
+    pub fn get_label_name(&self) -> Result<(Option<String>, bool)> {
+        if self.stmt_type.is_label() {
+            if self.loc.is_point_loc() {
+                return Ok((None, true));
+            }
+            let content = self.loc.get_content()?;
+            let label_name = content[0..content.len() - 1].to_string();
+
+            Ok((Some(label_name), true))
+        } else {
+            Ok((None, false))
+        }
+    }
 }
 
 impl PartialOrd for ChildEntry {
@@ -669,5 +706,29 @@ impl ForStmt {
             update_loc,
             body_entry,
         })
+    }
+}
+
+pub struct LabelDict {
+    data: HashMap<String, SharedStmtNodePtr>,
+}
+
+impl LabelDict {
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, label: String, ptr: SharedStmtNodePtr) -> Result<()> {
+        if self.data.contains_key(&label) {
+            bail!("Duplicate label found: {}", label);
+        }
+        self.data.insert(label, ptr);
+        Ok(())
+    }
+
+    pub fn get(&self, label: &str) -> Option<&SharedStmtNodePtr> {
+        self.data.get(label)
     }
 }

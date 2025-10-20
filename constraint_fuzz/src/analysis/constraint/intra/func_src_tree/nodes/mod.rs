@@ -28,8 +28,8 @@ use crate::analysis::constraint::{
         },
         nodes::cf_nodes::{CFNode, CasePtrMap, SwitchArm, SwitchNode},
         stmts::{
-            BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, QLLoc, StmtType, SwitchStmt,
-            WhileStmt,
+            BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, LabelDict, QLLoc, StmtType,
+            SwitchStmt, WhileStmt,
         },
     },
     stmt_collect::ProcessUnit,
@@ -57,6 +57,17 @@ pub struct StmtNode {
 }
 
 impl StmtNode {
+    pub fn is_jump_stmt(&self) -> bool {
+        match &self.variants {
+            StmtNodeVariants::Plain(plain_node) => {
+                matches!(plain_node.stmt_type, StmtType::Break)
+                    || matches!(plain_node.stmt_type, StmtType::Continue)
+                    || matches!(plain_node.stmt_type, StmtType::Goto)
+            }
+            _ => false,
+        }
+    }
+
     pub fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
         match &self.variants {
             StmtNodeVariants::Block(block_node) => block_node.src_loc_inner(src_loc),
@@ -303,6 +314,15 @@ pub struct PlainStmtNode {
 }
 
 impl PlainStmtNode {
+    pub fn get_goto_label(&self) -> Result<String> {
+        const GOTO_PREFIX: &str = "goto ";
+        let content = self.loc.get_content()?;
+        let lab_name = content[GOTO_PREFIX.len()..content.len() - 1]
+            .trim()
+            .to_string();
+        Ok(lab_name)
+    }
+
     pub fn new(loc: &QLLoc, func_invoc_map: &FuncInvocMap, stmt_type: &StmtType) -> Self {
         let invoc_vec = SrcExpr::get_invoc_by_loc(loc, func_invoc_map);
 
@@ -428,6 +448,7 @@ pub struct FuncSrcTree {
     valid_var_vec: Vec<SrcVar>,
     pub ret_type: VarType,
     pub func_name: String,
+    label_dict: LabelDict,
 }
 
 impl FuncSrcTree {
@@ -439,6 +460,7 @@ impl FuncSrcTree {
         name: &str,
         func_scope_map: &FuncScopeMap,
         ret_type: VarType,
+        label_dict: LabelDict,
     ) -> Self {
         let valid_var_vec = match func_scope_map.get(name) {
             None => vec![],
@@ -449,6 +471,7 @@ impl FuncSrcTree {
             valid_var_vec,
             ret_type,
             func_name: name.to_string(),
+            label_dict,
         }
     }
 
@@ -456,9 +479,10 @@ impl FuncSrcTree {
         Rc::clone(&self.root)
     }
 
-    pub fn iter(&self) -> FuncSrcTreeIter {
+    pub fn iter(&self) -> FuncSrcTreeIter<'_> {
         FuncSrcTreeIter {
             cur_ptr_op: Some(Rc::clone(&self.root)),
+            tree: self,
         }
     }
 
@@ -485,11 +509,12 @@ impl FuncSrcTree {
     }
 }
 
-pub struct FuncSrcTreeIter {
+pub struct FuncSrcTreeIter<'a> {
     cur_ptr_op: Option<SharedStmtNodePtr>,
+    tree: &'a FuncSrcTree,
 }
 
-impl FuncSrcTreeIter {
+impl<'a> FuncSrcTreeIter<'a> {
     pub fn select(&mut self, cf_struct: &CFNode, exec_node: &ExecFuncNode, exec_idx: &mut usize) {
         // TODO: implement the selection logic
         unimplemented!()
@@ -542,7 +567,7 @@ impl FuncSrcTreeIter {
         let mut cur_ptr = cur_ptr;
         // let mut par_ptr;
         loop {
-            // get next sibling ptr
+            // get parent ptr
             let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
                 None => return Ok(None),
                 Some(wp) => match wp.upgrade() {
@@ -550,6 +575,7 @@ impl FuncSrcTreeIter {
                     Some(p) => p,
                 },
             };
+            // get next sibling ptr
             if let Some(ptr) = Self::get_next_sibling_ptr_impl(par_ptr.clone(), cur_ptr.clone()) {
                 return Ok(Some(ptr));
             }
@@ -558,6 +584,7 @@ impl FuncSrcTreeIter {
             if par_ptr.borrow().is_loop_node() {
                 return Ok(Some(par_ptr));
             }
+            // go up
             cur_ptr = par_ptr;
         }
     }
@@ -585,37 +612,128 @@ impl FuncSrcTreeIter {
         let mut stmt_node = stmt_ptr.borrow_mut();
         stmt_node.update_loopnode_count();
     }
+
+    fn cur_jump(&self) -> bool {
+        match &self.cur_ptr_op {
+            None => false,
+            Some(ptr) => {
+                let stmt_node = ptr.borrow();
+                stmt_node.is_jump_stmt()
+            }
+        }
+    }
+
+    fn get_parent_loopptr(&self) -> Result<SharedStmtNodePtr> {
+        let mut cur_ptr = match &self.cur_ptr_op {
+            None => bail!("FuncSrcTree Iter goup_until_loopnode: Current pointer is None"),
+            Some(ptr) => ptr.clone(),
+        };
+        let par_loop_ptr = loop {
+            let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
+                None => bail!(
+                    "FuncSrcTree Iter goup_until_loopnode: Reached root without finding loop node"
+                ),
+                Some(wp) => match wp.upgrade() {
+                    None => {
+                        bail!("FuncSrcTree Iter goup_until_loopnode: Failed to upgrade father ptr")
+                    }
+                    Some(p) => p,
+                },
+            };
+            if par_ptr.borrow().is_loop_node() {
+                break par_ptr;
+            }
+            cur_ptr = par_ptr;
+        };
+        Ok(par_loop_ptr)
+    }
+
+    /**
+     * Named label do not allow emtpry next pointer
+     */
+    fn get_goto_next_ptr(&self, plain_node: &PlainStmtNode) -> Result<SharedStmtNodePtr> {
+        let lab_name = plain_node.get_goto_label()?;
+        let lab_ptr = self.tree.label_dict.get(&lab_name).ok_or_else(||{
+            eyre::eyre!("Func Src Iter, goto handle: Could not find corresponding label stmt pointer based on label name {}", lab_name)
+        })?;
+        let next_ptr = match Self::get_after_next_ptr(lab_ptr.clone())? {
+            Some(p) => p,
+            None => bail!(
+                "Func Src Iter, goto handle: Could not find next pointer after label statement"
+            ),
+        };
+        Ok(next_ptr)
+    }
+
+    fn jump_next(&mut self) -> Result<()> {
+        let next_ptr_op = {
+            let stmt_node = match &self.cur_ptr_op {
+                None => bail!("FuncSrcTree Iter jump_next: Current pointer is None"),
+                Some(ptr) => ptr.borrow(),
+            };
+            match &stmt_node.variants {
+                StmtNodeVariants::Plain(plain_node) => match &plain_node.stmt_type {
+                    StmtType::Continue => Some(self.get_parent_loopptr()?),
+                    StmtType::Break => {
+                        let loop_ptr = self.get_parent_loopptr()?;
+                        Self::get_after_next_ptr(loop_ptr)?
+                    }
+                    StmtType::Goto => Some(self.get_goto_next_ptr(plain_node)?),
+                    stmt_var => bail!(
+                        "FuncSrcTree Iter jump_next: Current pointer is not a jump statement: {:?}",
+                        stmt_var
+                    ),
+                },
+                _ => bail!("FuncSrcTree Iter jump_next: Current pointer is not PlainStmtNode"),
+            }
+        };
+        self.cur_ptr_op = next_ptr_op;
+        Ok(())
+    }
+
+    pub fn skip_jump_statements(&mut self) -> Result<()> {
+        while self.cur_jump() {
+            self.jump_next()?;
+        }
+        Ok(())
+    }
 }
 
-impl Iterator for FuncSrcTreeIter {
+impl<'a> Iterator for FuncSrcTreeIter<'a> {
     type Item = SharedStmtNodePtr;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match &self.cur_ptr_op {
-            None => None,
-            Some(ptr) => {
-                let is_cf = {
-                    let stmt_node = ptr.borrow();
-                    stmt_node.is_cf_node()
-                };
+        let ptr = match &self.cur_ptr_op {
+            None => return None,
+            Some(p) => p.clone(),
+        };
 
-                if is_cf {
-                    // update Loop Node count field
-                    Self::update_loop_node_count(ptr.clone());
+        let is_cf = {
+            let stmt_node = ptr.borrow();
+            stmt_node.is_cf_node()
+        };
 
-                    // just return current ptr and do not modify iterator state
-                    // Since update logic would be implemented by later action handle
-                    return Some(ptr.clone());
-                }
+        if is_cf {
+            // update Loop Node count field
+            Self::update_loop_node_count(ptr.clone());
 
-                let next_ptr = self
-                    .get_next_ptr()
-                    .unwrap_or_else(|e| panic!("Error getting next ptr: {:?}", e));
-                let ret_ptr = Some(Rc::clone(ptr));
-                self.cur_ptr_op = next_ptr;
-                ret_ptr
-            }
+            // just return current ptr and do not modify iterator state
+            // Since update logic would be implemented by later action handle
+            return Some(ptr.clone());
         }
+
+        // skip all jump statements
+        self.skip_jump_statements().unwrap_or_else(|e| {
+            panic!("Func Src Iter next: Failed to skip jump statements, {}", e)
+        });
+
+        // return current and update current
+        let next_ptr = self
+            .get_next_ptr()
+            .unwrap_or_else(|e| panic!("Error getting next ptr: {:?}", e));
+        let ret_ptr = Some(ptr.clone());
+        self.cur_ptr_op = next_ptr;
+        ret_ptr
     }
 }
 

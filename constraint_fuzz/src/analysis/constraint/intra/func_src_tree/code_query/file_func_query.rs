@@ -33,6 +33,10 @@ pub struct FuncInfo {
 }
 
 impl FuncInfo {
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
     pub fn compare_line_and_col(&self, line: usize, col: usize) -> std::cmp::Ordering {
         self.body_loc.compare_line_and_col(line, col)
     }
