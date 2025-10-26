@@ -1,6 +1,7 @@
 
 #include "runtime/guard_impl.h"
 #include "config.h"
+#include "runtime_context.h"
 #include "utils.h"
 #include <algorithm>
 #include <cassert>
@@ -112,143 +113,6 @@ std::ofstream &get_of() {
   }
   return create_of(tid);
 }
-/**
-  Loop Context Implementation
-*/
-
-using LoopEntry =
-    std::pair<std::string, std::size_t>; // loop location and count
-
-using LoopStack = std::stack<LoopEntry>;
-// static std::stack<LoopEntry> loop_stack;
-
-std::map<Tid, LoopStack> loop_stack_map;
-std::mutex loop_stack_mutex;
-
-LoopStack &get_loop_stack() {
-  Tid tid = std::this_thread::get_id();
-
-  std::lock_guard<std::mutex> lock(loop_stack_mutex);
-  auto it = loop_stack_map.find(tid);
-  if (it != loop_stack_map.end()) {
-    return it->second;
-  }
-  // create a new stack for this thread
-  LoopStack &new_stack = loop_stack_map[tid];
-  return new_stack;
-}
-
-/**
-Function Stack Data Structure
-*/
-
-using FuncStack = std::vector<std::string>;
-std::map<Tid, FuncStack> func_stack_map;
-std::mutex func_stack_mutex;
-
-FuncStack &get_func_stack() {
-  Tid tid = std::this_thread::get_id();
-
-  std::lock_guard<std::mutex> lock(func_stack_mutex);
-  auto it = func_stack_map.find(tid);
-  if (it != func_stack_map.end()) {
-    return it->second;
-  }
-  // create a new stack for this thread
-  FuncStack &new_stack = func_stack_map[tid];
-  return new_stack;
-}
-
-// check recursion
-bool check_recur(const char *func_name, const FuncStack &func_stack) {
-  auto it = std::find(func_stack.rbegin(), func_stack.rend(), func_name);
-  return it != func_stack.rend();
-}
-
-/**
-Recur Lock Data Structure
-*/
-
-struct RecurFrame {
-  std::string func_name;
-  std::size_t idx;
-
-  RecurFrame(std::string_view name, std::size_t idx)
-      : func_name(name), idx(idx) {}
-
-  bool matches(std::string_view name, std::size_t idx) const {
-    return func_name == name && this->idx == idx;
-  }
-};
-
-struct RecurLock {
-  bool value;
-  std::optional<RecurFrame> frame;
-
-  // Initialize the lock with no frame
-  RecurLock() : value(false), frame(std::nullopt) {}
-
-  bool is_locked() const { return value; }
-
-  bool lock(const char *func_name, std::size_t idx) {
-    if (is_locked()) {
-      // already locked which means in nested recursion -> do not update
-      return false;
-    }
-    print_rec_to_file_with_guard("Recur Lock locked");
-    // update
-    value = true;
-    frame = RecurFrame(func_name, idx);
-    return true;
-  }
-
-  // try to lock the Recursion Loc, return true if successful
-  bool try_lock(const char *func_name, const FuncStack &func_stack) {
-    if (!check_recur(func_name, func_stack)) {
-      return false;
-    }
-    std::size_t idx = func_stack.size();
-    return lock(func_name, idx);
-  }
-
-  void release() {
-    value = false;
-    frame.reset(); // reset the frame
-    print_rec_to_file_with_guard("Recur Lock released");
-  }
-
-  // invoked before pop
-  bool try_release(const FuncStack &func_stack) {
-    if (!is_locked()) {
-      // not locked, cannot release
-      return false;
-    }
-    std::string_view func_name = func_stack.back();
-    std::size_t idx = func_stack.size() - 1;
-    if (!frame.value().matches(func_name, idx)) {
-      // not matching the current frame, cannot release
-      return false;
-    }
-
-    release();
-    return true;
-  }
-};
-
-std::unordered_map<Tid, RecurLock> recur_lock_map;
-std::mutex recur_lock_mutex;
-RecurLock &get_recur_lock() {
-  Tid tid = std::this_thread::get_id();
-
-  std::lock_guard<std::mutex> lock(recur_lock_mutex);
-  auto it = recur_lock_map.find(tid);
-  if (it != recur_lock_map.end()) {
-    return it->second;
-  }
-  // create a new lock for this thread
-  RecurLock &new_lock = recur_lock_map[tid];
-  return new_lock;
-}
 
 // #define LOG_FILE(fmt...)                                                       \
 //   do {                                                                         \
@@ -263,84 +127,44 @@ RecurLock &get_recur_lock() {
 //   }
 // }
 
+// Runtime Context definition
+RuntimeCtxMap ctx_map;
+
 void print_func_rec_to_file(const char *prmp, const char *func_name) {
   std::string deman = demangle(func_name);
   std::stringstream ss;
   ss << prmp << " " << deman;
   std::string rec = ss.str();
-  print_rec_to_file_with_guard(rec.c_str());
+  print_rec_to_file_with_lockcheck(rec.c_str());
 }
 
 /**
 Function Instrument Guard Implementation
 */
 
-// invoked before function entry was pushed to the stack
-bool recur_lock(const char *func_name, FuncStack &func_stack) {
-  RecurLock &recur_lock = get_recur_lock();
-  return recur_lock.try_lock(func_name, func_stack);
-}
+// void pop_func_impl(const char *func_name, FuncStack &func_stack,
 
-bool recur_release(const char *func_name, const FuncStack &func_stack) {
-  RecurLock &recur_lock = get_recur_lock();
-  return recur_lock.try_release(func_stack);
-}
-
-void pop_func_impl(const char *func_name, FuncStack &func_stack,
-                   const char *prompt, bool unwind = false) {
-  recur_release(func_name, func_stack);
-  // enable unwind output
-  print_func_rec_to_file(prompt, func_name);
-  func_stack.pop_back();
-}
+//                    const char *prompt, bool unwind = false) {
+//   recur_release(func_name, func_stack);
+//   // enable unwind output
+//   print_func_rec_to_file(prompt, func_name);
+//   func_stack.pop_back();
+// }
 
 void pop_func(const char *func_name) {
-  FuncStack &func_stack = get_func_stack();
-  // check unexpected pop
-  assert(!func_stack.empty() && "Function stack is empty, cannot pop function");
-
-  // disable function unwind at func exit
-  assert(func_name == func_stack.back() &&
-         "Func Exit: Function name does not match the top of the stack");
-  pop_func_impl(func_name, func_stack, "return from");
-  // if (func_name == func_stack.back()) {
-  //   // if the function name matches the top of the stack, pop it
-  //   pop_func_impl(func_name, func_stack, "return from");
-  // } else {
-  //   while (func_name != func_stack.back()) {
-  //     pop_func_impl(func_stack.back().c_str(), func_stack, "unwind from",
-  //     true);
-  //   }
-  //   pop_func_impl(func_name, func_stack, "return from");
-  // }
+  ctx_map.pop_func(func_name);
+  print_func_rec_to_file("return from", func_name);
 }
 
 void push_func(const char *func_name) {
   // output -> try_lock -> push to stack
   print_func_rec_to_file("enter", func_name);
-  FuncStack &func_stack = get_func_stack();
-  recur_lock(func_name, func_stack);
-  func_stack.push_back(func_name);
+  ctx_map.push_func(func_name);
 }
 
 /**
 Output Guard Implementation
 */
-
-bool exceed_loop_limit() {
-  LoopStack &loop_stack = get_loop_stack();
-  if (loop_stack.empty()) {
-    return false;
-  }
-  auto &cur = loop_stack.top();
-  auto cnt = cur.second;
-  return cnt > LOOP_LIMIT;
-}
-
-bool is_recur_locked() {
-  RecurLock &recur_lock = get_recur_lock();
-  return recur_lock.is_locked();
-}
 
 /**
 Output with No Guard Version
@@ -350,8 +174,8 @@ void print_content_to_file(const char *content) {
   out << content;
 }
 
-void print_rec_to_file_with_recur_guard(const char *rec) {
-  if (is_recur_locked()) {
+void print_rec_to_file_with_recur_check(const char *rec) {
+  if (ctx_map.is_recur_locked()) {
     // if recursion is locked, do not print
     return;
   }
@@ -363,106 +187,51 @@ void print_rec_to_file_with_recur_guard(const char *rec) {
 /**
 Output with Guard Version
 */
-void print_content_to_file_with_guard(const char *content) {
-  if (exceed_loop_limit()) {
-    return;
-  }
-  if (is_recur_locked()) {
+void print_content_to_file_with_lockcheck(const char *content) {
+  if (ctx_map.is_locked()) {
+    // if guard is locked, do not print
     return;
   }
   print_content_to_file(content);
 }
 
-void print_rec_to_file_with_guard(const char *rec) {
+void print_rec_to_file_with_lockcheck(const char *rec) {
   std::stringstream ss;
   ss << rec << "\n";
-  print_content_to_file_with_guard(ss.str().c_str());
-}
-
-void push_new_entry_to_loop_stack(const char *loop_loc, LoopStack &loop_stack) {
-  LoopEntry lent{loop_loc, 1};
-  loop_stack.push(lent);
-
-  std::stringstream ss;
-  ss << "Loop Hit: " << loop_loc << " at count " << 1;
-  print_rec_to_file_with_recur_guard(ss.str().c_str());
+  print_content_to_file_with_lockcheck(ss.str().c_str());
 }
 
 /**
 Loop Instrument Guard Implementation
 */
 void loop_entry(const char *loop_loc) {
-  LoopStack &loop_stack = get_loop_stack();
-  if (loop_stack.empty()) {
-    // hit at new loop without nesting
-    // if the stack is empty, push a new entry
-    push_new_entry_to_loop_stack(loop_loc, loop_stack);
-    return;
-  }
+  std::size_t iter_cnt = ctx_map.loop_entry(loop_loc);
+  if (iter_cnt == LOOP_LIMIT + 1) {
 
-  auto &cur = loop_stack.top();
-  if (cur.first == loop_loc) {
-    // hit at current loop
-    // increment the count
-    cur.second++;
-    auto cnt = cur.second;
-    if (cnt <= LOOP_LIMIT) {
-      // Repeated hit for current loop entry
-      std::stringstream ss;
-      ss << "Loop Hit: " << loop_loc << " at count " << cnt;
-      //
-      print_rec_to_file_with_recur_guard(ss.str().c_str());
-    } else if (cnt - LOOP_LIMIT == 1) {
-      // Loop Entry Exceed
-      std::stringstream ss;
-      ss << "Loop Limit Exceed: " << loop_loc << " at count " << cnt;
-      print_rec_to_file_with_recur_guard(ss.str().c_str());
-    }
+    std::stringstream ss;
+    ss << "Loop Limit Exceed: " << loop_loc << " at count " << iter_cnt;
+    // set lock moment without loop lock check
+    print_rec_to_file_with_recur_check(ss.str().c_str());
   } else {
-    // hit at nested loop
-    // push a new entry
-
-    auto parent_count = cur.second;
-    if (parent_count > LOOP_LIMIT) {
-      // if parent loop is already exceeding limit, do not push new entry
-      return;
-    }
-
-    push_new_entry_to_loop_stack(loop_loc, loop_stack);
+    std::stringstream ss;
+    ss << "Loop Hit: " << loop_loc << " at count " << iter_cnt;
+    // normal status with loop lock check
+    print_rec_to_file_with_lockcheck(ss.str().c_str());
   }
 }
 
 void loop_out(const char *header_loc, const char *out_loc) {
-  LoopStack &loop_stack = get_loop_stack();
-  if (loop_stack.empty()) {
-    // if the stack is empty, this is an error
-    std::stringstream ss;
-    ss << "Loop end without loop start: " << header_loc << " " << out_loc;
-    print_rec_to_file_with_recur_guard(ss.str().c_str());
-    return;
-  }
-  // consider reasonable to be hit without passing loop entry
-  auto &cur = loop_stack.top();
-  if (cur.first == header_loc) {
-    loop_stack.pop();
-    // Loop End Out
+  LoopPopResult res = ctx_map.loop_out(header_loc);
+  std::size_t iter_cnt = res.get_iter_count();
+  if (res.is_poped()) {
     std::stringstream ss;
     ss << "Out of Loop: " << header_loc << " " << out_loc << " at count "
-       << cur.second;
-    print_rec_to_file_with_recur_guard(ss.str().c_str());
+       << iter_cnt;
+    print_rec_to_file_with_lockcheck(ss.str().c_str());
   } else {
-    // this is an error, loop end without loop start
-    // Loop End Without Start
-
-    // check if parent loop is exceeding limit
-    auto parent_count = cur.second;
-    if (parent_count > LOOP_LIMIT) {
-      return;
-    }
-
     std::stringstream ss;
     ss << "Loop end without loop start: " << header_loc << " " << out_loc;
-    print_rec_to_file_with_recur_guard(ss.str().c_str());
+    print_rec_to_file_with_lockcheck(ss.str().c_str());
   }
 }
 
@@ -470,9 +239,9 @@ void loop_out(const char *header_loc, const char *out_loc) {
 void thread_rec(const char *loc, void *tid_ptr) {
   pthread_t tid = *(pthread_t *)tid_ptr;
   std::stringstream ss;
-  ss << "Thread Creation: " << loc << " " << tid << "\n";
-  // regardless of guards
-  print_content_to_file(ss.str().c_str());
+  ss << "Thread Creation: " << loc << " " << tid;
+  // consider lock check
+  print_rec_to_file_with_lockcheck(ss.str().c_str());
 }
 
 // static std::unordered_map<std::size_t, unsigned int> loop_counter;
@@ -504,7 +273,7 @@ void thread_rec(const char *loc, void *tid_ptr) {
 void ubv_rec(const char *loc, bool val) {
   std::stringstream ss;
   ss << "Unconditional Branch Value: " << loc << " " << val;
-  print_rec_to_file_with_guard(ss.str().c_str());
+  print_rec_to_file_with_lockcheck(ss.str().c_str());
 }
 
 /**
@@ -514,40 +283,43 @@ void ubv_rec(const char *loc, bool val) {
 void select_rec(const char *loc, bool val) {
   std::stringstream ss;
   ss << "Select Guard: " << loc << " " << val;
-  print_rec_to_file_with_guard(ss.str().c_str());
+  print_rec_to_file_with_lockcheck(ss.str().c_str());
 }
 
 /**
   Setjmp and Longjmp handle
 */
 
-void stack_rollback(const char *func_name, int stk_size) {
-  FuncStack &func_stack = get_func_stack();
-  while ((int)func_stack.size() > stk_size) {
-    pop_func_impl(func_stack.back().c_str(), func_stack, "longjmp unwind",
-                  true);
+void stack_rollback(const char *func_name, std::size_t stk_size) {
+  RuntimeContext &ctx = ctx_map.get_ctx();
+  while (ctx.get_func_stack_size() > stk_size) {
+    std::string cur_func = ctx.func_unwind();
+    print_func_rec_to_file("longjmp unwind", cur_func.c_str());
   }
+  // func clear loop stack
+  ctx.func_clear_loops();
 }
 
 void setjmp_guard(int ret_val, const char *func_name, const char *loc) {
-  static int stk_size = -1;
+  static std::size_t stk_size = 0;
 
   if (ret_val == 0) {
     // pre setjmp
-    stk_size = get_func_stack().size();
+    stk_size = ctx_map.get_func_stack_size();
+    assert(stk_size > 0 && "Current stack size should not be 0");
   } else {
+    assert(stk_size > 0 && "Setjmp stack size should not be 0");
     // post setjmp: func stack rollback handle
     stack_rollback(func_name, stk_size);
   }
-  assert(stk_size >= 0 && "Current stack size should not be minus");
 
   // action record output
   std::stringstream ss;
   if (ret_val == 0) {
-    ss << "Pre Setjmp: ";
+    ss << "Pre-long Setjmp: ";
   } else {
-    ss << "Post Setjmp: ";
+    ss << "Post-long Setjmp: ";
   }
   ss << func_name << " " << stk_size << " " << loc;
-  print_rec_to_file_with_guard(ss.str().c_str());
+  print_rec_to_file_with_lockcheck(ss.str().c_str());
 }

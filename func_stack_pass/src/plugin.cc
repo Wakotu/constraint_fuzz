@@ -221,8 +221,8 @@ FunctionCallee get_rec_log_func_decl(Module &M) {
 
   FunctionType *rec_log_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
-  FunctionCallee rec_log_func_cl =
-      M.getOrInsertFunction("print_rec_to_file_with_guard", rec_log_func_ty);
+  FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
+      "print_rec_to_file_with_lockcheck", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -235,7 +235,7 @@ FunctionCallee get_content_log_func_decl(Module &M) {
   FunctionType *rec_log_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty}, false);
   FunctionCallee rec_log_func_cl = M.getOrInsertFunction(
-      "print_content_to_file_with_guard", rec_log_func_ty);
+      "print_content_to_file_with_lockcheck", rec_log_func_ty);
   return rec_log_func_cl;
 }
 
@@ -1166,8 +1166,8 @@ bool instru_for_longjmp_invocation(Module &M, ModuleAnalysisManager &MAM) {
         // create instrumentation IR builder
         InstrumentationIRBuilder irb(I);
         auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
-        auto content_log_func_cl = get_content_log_func_decl(M);
-        irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+        auto rec_log_func_cl = get_rec_log_func_decl(M);
+        irb.CreateCall(rec_log_func_cl, {invoc_rec_str});
       }
     }
   }

@@ -4,17 +4,35 @@
 #include <cstddef>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 
 void FuncStack::push(const char *func_name) {
   FuncEntry ent(func_name);
   stk.push_back(ent);
 }
 
-void FuncStack::pop() { stk.pop_back(); }
+const FuncEntry &FuncStack::const_top_func() const {
+  assert(!stk.empty() &&
+         "Top func: Runtime func stack should not be empty at this procedure");
+  return stk.back();
+}
+
+FuncEntry &FuncStack::top_func() {
+  assert(!stk.empty() &&
+         "Top func: Runtime func stack should not be empty at this procedure");
+  return stk.back();
+}
+
+void FuncStack::pop() {
+  assert(!stk.empty() &&
+         "Pop func: Runtime func stack should not be empty at this procedure");
+  stk.pop_back();
+}
 
 bool FuncStack::check_recur() const {
-  std::string_view cur_func = stk.back().get_func_name();
+  std::string_view cur_func = const_top_func().get_func_name();
   int size = stk.size();
   for (int i = size - 1; i >= 0; i--) {
     std::string_view func_name = stk[i].get_func_name();
@@ -26,10 +44,7 @@ bool FuncStack::check_recur() const {
 }
 
 std::string_view FuncStack::top_func_name() const {
-  if (stk.empty()) {
-    return "";
-  }
-  return stk.back().get_func_name();
+  return const_top_func().get_func_name();
 }
 
 void RecurLock::lock(std::string_view func_name, std::size_t stk_size) {
@@ -79,13 +94,21 @@ void RuntimeContext::try_recur_release() {
   recur_lock.release();
 }
 
+bool FuncStack::top_loop_empty() const { return const_top_func().loop_emty(); }
+
+void RuntimeContext::pop_func_impl() {
+  try_recur_release();
+  func_stk.pop();
+}
+
 void RuntimeContext::pop_func(const char *func_name) {
   std::string_view top_func = func_stk.top_func_name();
   assert(top_func == func_name &&
          "Pop func: func name at the top of runtime func stack does not equal "
          "to passed in func_name parameter");
-  try_recur_release();
-  func_stk.pop();
+  assert(func_stk.top_loop_empty() &&
+         "Pop func: loop stack at top func entry should be empty");
+  pop_func_impl();
 }
 
 LoopEntry *FuncEntry::top_loop() {
@@ -96,8 +119,15 @@ LoopEntry *FuncEntry::top_loop() {
 }
 
 LoopEntry *FuncStack::top_loop() {
-  assert(!stk.empty() && "Function stack should not be empty at Loop Actions");
-  return stk.back().top_loop();
+  // assert(!stk.empty() && "Function stack should not be empty at Loop
+  // Actions");
+  for (int i = stk.size() - 1; i >= 0; i--) {
+    LoopEntry *top_loop = stk[i].top_loop();
+    if (top_loop) {
+      return top_loop;
+    }
+  }
+  return nullptr;
 }
 
 void LoopStack::push(const char *loop_loc) { stk.emplace(LoopEntry(loop_loc)); }
@@ -105,8 +135,9 @@ void LoopStack::push(const char *loop_loc) { stk.emplace(LoopEntry(loop_loc)); }
 void FuncEntry::push_loop(const char *loop_loc) { loop_stk.push(loop_loc); }
 
 void FuncStack::push_loop(const char *loop_loc) {
-  assert(!stk.empty() && "Function stack should not be empty at Loop Actions");
-  stk.back().push_loop(loop_loc);
+  // assert(!stk.empty() && "Function stack should not be empty at Loop
+  // Actions");
+  top_func().push_loop(loop_loc);
 }
 
 std::optional<std::size_t> LoopStack::update_top() {
@@ -121,22 +152,23 @@ std::optional<std::size_t> FuncEntry::update_top_loop() {
   return loop_stk.update_top();
 }
 std::optional<std::size_t> FuncStack::update_top_loop() {
-  assert(!stk.empty() && "Function stack should not be empty at Loop Actions");
-  return stk.back().update_top_loop();
+  // assert(!stk.empty() && "Function stack should not be empty at Loop
+  // Actions");
+  return top_func().update_top_loop();
 }
 
-void RuntimeContext::push_loop(const char *loop_loc) {
+std::size_t RuntimeContext::push_loop(const char *loop_loc) {
   if (is_loop_locked())
-    return;
+    return 0;
   func_stk.push_loop(loop_loc);
+  return 1;
 }
 
-void RuntimeContext::loop_entry(const char *loop_loc) {
+std::size_t RuntimeContext::loop_entry(const char *loop_loc) {
   // stack update
   LoopEntry *top_loop = func_stk.top_loop();
   if (!top_loop) {
-    push_loop(loop_loc);
-    return;
+    return push_loop(loop_loc);
   }
 
   if (top_loop->matches(loop_loc)) {
@@ -144,36 +176,54 @@ void RuntimeContext::loop_entry(const char *loop_loc) {
     assert(iter_cnt.has_value() &&
            "Loop iteration count update failed at loop entry");
     // lock update
-    if (iter_cnt.value() > LOOP_LIMIT) {
+    if (iter_cnt.value() == LOOP_LIMIT + 1) {
       loop_lock = true;
     }
+    return iter_cnt.value();
   } else {
-    push_loop(loop_loc);
+    return push_loop(loop_loc);
   }
 }
 
-void LoopStack::pop(const char *loop_loc) {
-  assert(!stk.empty() && "Loop Stack should not be empty at pop procedure");
+// Pop loop invocation at empty loop stack is allowed
+LoopPopResult LoopStack::pop(const char *loop_loc) {
+  // assert(!stk.empty() && "Loop Stack should not be empty at pop procedure");
+  if (stk.empty()) {
+    return {false, 0};
+  }
   LoopEntry &top_loop = stk.top();
-  assert(top_loop.matches(loop_loc) &&
-         "Pop loop: loop at the top of loop stack does not match the passed in "
-         "loop_loc parameter");
+  if (!top_loop.matches(loop_loc)) {
+    return {false, 0};
+  }
+  // assert(top_loop.matches(loop_loc) &&
+  //        "Pop loop: loop at the top of loop stack does not match the passed
+  //        in " "loop_loc parameter");
+  std::size_t iter_cnt = top_loop.get_iter_cnt();
   stk.pop();
+  return {true, iter_cnt};
 }
 
-void FuncEntry::pop_loop(const char *loop_loc) { loop_stk.pop(loop_loc); }
-
-void FuncStack::pop_loop(const char *loop_loc) {
-  assert(!stk.empty() && "Function stack should not be empty at Loop Actions");
-  stk.back().pop_loop(loop_loc);
+LoopPopResult FuncEntry::pop_loop(const char *loop_loc) {
+  return loop_stk.pop(loop_loc);
 }
 
-void RuntimeContext::loop_out(const char *loop_loc) {
-  func_stk.pop_loop(loop_loc);
+LoopPopResult FuncStack::pop_loop(const char *loop_loc) {
+  // assert(!stk.empty() && "Function stack should not be empty at Loop
+  // Actions");
+  return top_func().pop_loop(loop_loc);
+}
+
+void RuntimeContext::update_loop_lock() {
   LoopEntry *top_loop = func_stk.top_loop();
   if (!top_loop || top_loop->get_iter_cnt() <= LOOP_LIMIT) {
     loop_lock = false;
   }
+}
+
+LoopPopResult RuntimeContext::loop_out(const char *loop_loc) {
+  LoopPopResult res = func_stk.pop_loop(loop_loc);
+  update_loop_lock();
+  return res;
 }
 
 RuntimeContext &RuntimeCtxMap::get_ctx() {
@@ -200,12 +250,50 @@ void RuntimeCtxMap::pop_func(const char *func_name) {
   ctx.pop_func(func_name);
 }
 
-void RuntimeCtxMap::loop_entry(const char *loop_loc) {
+std::size_t RuntimeCtxMap::loop_entry(const char *loop_loc) {
   RuntimeContext &ctx = get_ctx();
-  ctx.loop_entry(loop_loc);
+  return ctx.loop_entry(loop_loc);
 }
 
-void RuntimeCtxMap::loop_out(const char *loop_loc) {
+LoopPopResult RuntimeCtxMap::loop_out(const char *loop_loc) {
   RuntimeContext &ctx = get_ctx();
-  ctx.loop_out(loop_loc);
+  return ctx.loop_out(loop_loc);
+}
+
+bool RuntimeCtxMap::is_recur_locked() {
+  RuntimeContext &ctx = get_ctx();
+  return ctx.is_recur_locked();
+}
+
+bool RuntimeContext::is_locked() {
+  return is_loop_locked() || recur_lock.is_locked();
+}
+
+bool RuntimeCtxMap::is_locked() {
+  RuntimeContext &ctx = get_ctx();
+  return ctx.is_locked();
+}
+
+std::size_t RuntimeCtxMap::get_func_stack_size() {
+  RuntimeContext &ctx = get_ctx();
+  return ctx.get_func_stack_size();
+}
+
+std::string RuntimeContext::func_unwind() {
+  // clone the current function name before popping
+  std::string cur_func(func_stk.top_func_name());
+  pop_func_impl();
+  // update loop lock
+  update_loop_lock();
+  return cur_func;
+}
+
+void RuntimeContext::func_clear_loops() {
+  func_stk.top_func().clear_loops();
+  update_loop_lock();
+}
+
+std::string RuntimeCtxMap::func_unwind() {
+  RuntimeContext &ctx = get_ctx();
+  return ctx.func_unwind();
 }

@@ -11,6 +11,18 @@
 #include <thread>
 #include <vector>
 
+class LoopPopResult {
+  bool poped;
+  std::size_t iter_count;
+
+public:
+  LoopPopResult(bool poped, std::size_t iter_count)
+      : poped(poped), iter_count(iter_count) {}
+
+  bool is_poped() const { return poped; }
+  std::size_t get_iter_count() const { return iter_count; }
+};
+
 class LoopEntry {
   std::string header_loc;
   std::size_t iter_cnt;
@@ -32,8 +44,10 @@ public:
   LoopEntry &top() { return stk.top(); }
   bool empty() const { return stk.empty(); }
 
+  void clear() { stk = std::stack<LoopEntry>(); }
+
   void push(const char *loop_loc);
-  void pop(const char *loop_loc);
+  LoopPopResult pop(const char *loop_loc);
 
   std::optional<std::size_t> update_top();
 };
@@ -46,9 +60,12 @@ public:
   std::string_view get_func_name() const { return func_name; }
   FuncEntry(const char *func_name) : func_name(func_name), loop_stk() {}
 
+  bool loop_emty() const { return loop_stk.empty(); }
+  void clear_loops() { loop_stk.clear(); }
+
   LoopEntry *top_loop();
   void push_loop(const char *loop_loc);
-  void pop_loop(const char *loop_loc);
+  LoopPopResult pop_loop(const char *loop_loc);
   std::optional<std::size_t> update_top_loop();
 };
 
@@ -62,9 +79,14 @@ public:
 
   LoopEntry *top_loop();
   void push_loop(const char *loop_loc);
-  void pop_loop(const char *loop_loc);
+  LoopPopResult pop_loop(const char *loop_loc);
+
+  const FuncEntry &const_top_func() const;
+  FuncEntry &top_func();
 
   std::optional<std::size_t> update_top_loop();
+
+  bool top_loop_empty() const;
 
   void push(const char *func_name);
   void pop();
@@ -108,7 +130,10 @@ class RuntimeContext {
   void set_recur_lock();
 
   bool is_loop_locked() const { return loop_lock; }
-  void push_loop(const char *loop_loc);
+  std::size_t push_loop(const char *loop_loc);
+
+  void pop_func_impl();
+  void update_loop_lock();
 
 public:
   RuntimeContext() : loop_lock(false), recur_lock(), func_stk() {}
@@ -117,10 +142,19 @@ public:
   // should be invoked before func stack pop
   void try_recur_release();
 
+  // lock check methods
+  bool is_recur_locked() const { return recur_lock.is_locked(); }
+  bool is_locked();
+
   void push_func(const char *func_name);
   void pop_func(const char *func_name);
-  void loop_entry(const char *loop_loc);
-  void loop_out(const char *loop_loc);
+  std::size_t loop_entry(const char *loop_loc);
+  LoopPopResult loop_out(const char *loop_loc);
+
+  // setjmp related
+  std::size_t get_func_stack_size() const { return func_stk.size(); }
+  std::string func_unwind();
+  void func_clear_loops();
 };
 
 using Tid = std::thread::id;
@@ -128,13 +162,20 @@ class RuntimeCtxMap {
   std::map<Tid, RuntimeContext> ctx_map;
   std::mutex mtx;
 
-  RuntimeContext &get_ctx();
-
 public:
+  RuntimeContext &get_ctx();
   void push_func(const char *func_name);
   void pop_func(const char *func_name);
-  void loop_entry(const char *loop_loc);
-  void loop_out(const char *loop_loc);
+  // returns true if loop lock is set at this action
+  std::size_t loop_entry(const char *loop_loc);
+  LoopPopResult loop_out(const char *loop_loc);
+
+  // lock check methods
+  bool is_recur_locked();
+  bool is_locked();
+
+  std::size_t get_func_stack_size();
+  std::string func_unwind();
 };
 
 #endif // _RUNTIME_STACK_H_
