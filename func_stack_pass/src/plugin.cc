@@ -278,6 +278,19 @@ FunctionCallee get_sel_rec_func_decl(Module &M) {
   return sel_rec_func_cl;
 }
 
+FunctionCallee get_setjmp_guard_func_decl(Module &M) {
+  LLVMContext &ctx = M.getContext();
+
+  Type *void_ty = Type::getVoidTy(ctx);
+  Type *i32_ty = Type::getInt32Ty(ctx);
+  Type *i8_ty = Type::getInt8Ty(ctx);
+  Type *i8_ptr_ty = PointerType::getUnqual(i8_ty);
+  FunctionType *setjmp_guard_func_ty =
+      FunctionType::get(void_ty, {i32_ty, i8_ptr_ty, i8_ptr_ty}, false);
+  FunctionCallee setjmp_guard_func_cl =
+      M.getOrInsertFunction("setjmp_guard", setjmp_guard_func_ty);
+  return setjmp_guard_func_cl;
+}
 /**
   Br Instruction operations
 */
@@ -832,7 +845,7 @@ FunctionCallee get_loop_entry_func_decl(Module &M) {
   return loop_hit_func_cl;
 }
 
-FunctionCallee get_loop_end_func_decl(Module &M) {
+FunctionCallee get_loop_out_func_decl(Module &M) {
   LLVMContext &ctx = M.getContext();
   Type *void_ty = Type::getVoidTy(ctx);
   Type *i8_ty = Type::getInt8Ty(ctx);
@@ -841,7 +854,7 @@ FunctionCallee get_loop_end_func_decl(Module &M) {
   FunctionType *loop_end_func_ty =
       FunctionType::get(void_ty, {i8_ptr_ty, i8_ptr_ty}, false);
   FunctionCallee loop_end_func_cl =
-      M.getOrInsertFunction("loop_end", loop_end_func_ty);
+      M.getOrInsertFunction("loop_out", loop_end_func_ty);
   return loop_end_func_cl;
 }
 
@@ -923,14 +936,14 @@ bool instru_at_loop_entry_and_exit(Loop *L, Module &M) {
     InstrumentationIRBuilder irb(first_inst);
     Constant *out_loc_str_ptr = irb.CreateGlobalStringPtr(out_loc_str);
     // create a call to loop_end function
-    FunctionCallee loop_end_cl = get_loop_end_func_decl(M);
+    FunctionCallee loop_end_cl = get_loop_out_func_decl(M);
     irb.CreateCall(loop_end_cl, {loop_loc_str, out_loc_str_ptr});
   }
 
   return true;
 }
 
-using LoopList = std::vector<Loop *>;
+using LoopList = SmallVector<Loop *, 8>;
 
 LoopList collect_loop_instr_recur(Loop *L) {
   LoopList loops = {L};
@@ -1070,7 +1083,7 @@ bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
-      std::vector<CallBase *> thread_create_calls;
+      SmallVector<CallBase *, 8> thread_create_calls;
       // collect
       for (Instruction &I : BB) {
         if (CallBase *call_inst = dyn_cast<CallBase>(&I)) {
@@ -1120,7 +1133,7 @@ bool instru_for_longjmp_invocation(Module &M, ModuleAnalysisManager &MAM) {
   bool flag = false;
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
-      std::vector<CallBase *> longjmp_calls;
+      SmallVector<CallBase *, 8> longjmp_calls;
 
       // collect
       for (Instruction &I : BB) {
@@ -1145,6 +1158,7 @@ bool instru_for_longjmp_invocation(Module &M, ModuleAnalysisManager &MAM) {
         errs() << BLUE << "[Longjmp Invocation Instrument] " << RESET
                << "Longjmp Call Location: " << call_loc << "\n";
 
+        // invoc rec construction: contains only loc
         std::stringstream ss;
         ss << "Longjmp Invocation: " << call_loc;
         std::string rec = ss.str();
@@ -1166,7 +1180,7 @@ bool instru_for_setjmp_invocations(Module &M, ModuleAnalysisManager &MAM) {
 
   for (Function &F : M) {
     for (BasicBlock &BB : F) {
-      std::vector<CallBase *> setjmp_calls;
+      SmallVector<CallBase *, 8> setjmp_calls;
 
       // collect
       for (Instruction &I : BB) {
@@ -1190,19 +1204,29 @@ bool instru_for_setjmp_invocations(Module &M, ModuleAnalysisManager &MAM) {
         errs() << "\n";
 
         // parameter value colletion
+
+        // return value collection: check whether type is int
+        bool is_int = I->getType()->isIntegerTy(32);
+        assert(is_int && "Setjmp doesn't return int type");
+
+        // loc collection
         SrcLoc call_loc = get_src_loc(I, M);
         errs() << BLUE << "[Setjmp Invocation Instrument] " << RESET
                << "Setjmp Call Location: " << call_loc << "\n";
 
         std::stringstream ss;
-        ss << "Setjmp Invocation: " << call_loc;
+        ss << call_loc;
         std::string rec = ss.str();
 
-        // create instrumentation IR builder
-        InstrumentationIRBuilder irb(I);
-        auto invoc_rec_str = irb.CreateGlobalStringPtr(rec.c_str());
-        auto content_log_func_cl = get_content_log_func_decl(M);
-        irb.CreateCall(content_log_func_cl, {invoc_rec_str});
+        // guard should be located right after the setjmp call
+        InstrumentationIRBuilder irb(I->getNextNode());
+        // loc string creation
+        auto call_loc_str = irb.CreateGlobalStringPtr(rec.c_str());
+        // func name string creation
+        auto func_name_str = irb.CreateGlobalStringPtr(F.getName());
+        auto setjmp_cl = get_setjmp_guard_func_decl(M);
+
+        irb.CreateCall(setjmp_cl, {I, func_name_str, call_loc_str});
       }
     }
   }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs::read_dir, path::Path};
 use color_eyre::eyre::Result;
 
 use crate::analysis::constraint::{
-    inter::exec_tree::thread_tree::{SharedFuncNodePtr, ThreadExecTree, Tid, THCPMAPPING},
+    inter::exec_tree::thread_tree::{ExecThreadTree, SharedFuncNodePtr, Tid, THCPMAPPING},
     intra::func_src_tree::builder::{get_project_info, ProjectInfo},
 };
 
@@ -17,7 +17,7 @@ pub struct ExecForest {
     /// tid to idx mapping
     tid_mapping: HashMap<Tid, usize>,
 
-    thread_tree_list: Vec<ThreadExecTree>,
+    thread_tree_list: Vec<ExecThreadTree>,
     main_idx: usize,
 }
 
@@ -41,7 +41,7 @@ impl ExecForest {
         Ok(fname.ends_with(MAIN_SUFFIX))
     }
 
-    pub fn iter_trees(&self) -> impl Iterator<Item = &ThreadExecTree> {
+    pub fn iter_trees(&self) -> impl Iterator<Item = &ExecThreadTree> {
         self.thread_tree_list.iter()
     }
 
@@ -66,7 +66,7 @@ impl ExecForest {
                 idx = tree_list.len();
             }
 
-            let (tree, sub_mapping) = ThreadExecTree::from_guard_file(&guard_fpath, proj_info)?;
+            let (tree, sub_mapping) = ExecThreadTree::from_guard_file(&guard_fpath, proj_info)?;
 
             let tid = tree.get_tid();
             tid_mapping.insert(tid, tree_list.len());

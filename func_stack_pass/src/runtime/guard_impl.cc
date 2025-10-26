@@ -1,5 +1,5 @@
 
-#include "runtime/func_stack.h"
+#include "runtime/guard_impl.h"
 #include "config.h"
 #include "utils.h"
 #include <algorithm>
@@ -289,9 +289,8 @@ bool recur_release(const char *func_name, const FuncStack &func_stack) {
 void pop_func_impl(const char *func_name, FuncStack &func_stack,
                    const char *prompt, bool unwind = false) {
   recur_release(func_name, func_stack);
-  // Do not output if unwind
-  if (!unwind)
-    print_func_rec_to_file(prompt, func_name);
+  // enable unwind output
+  print_func_rec_to_file(prompt, func_name);
   func_stack.pop_back();
 }
 
@@ -300,15 +299,20 @@ void pop_func(const char *func_name) {
   // check unexpected pop
   assert(!func_stack.empty() && "Function stack is empty, cannot pop function");
 
-  if (func_name == func_stack.back()) {
-    // if the function name matches the top of the stack, pop it
-    pop_func_impl(func_name, func_stack, "return from");
-  } else {
-    while (func_name != func_stack.back()) {
-      pop_func_impl(func_stack.back().c_str(), func_stack, "unwind from", true);
-    }
-    pop_func_impl(func_name, func_stack, "return from");
-  }
+  // disable function unwind at func exit
+  assert(func_name == func_stack.back() &&
+         "Func Exit: Function name does not match the top of the stack");
+  pop_func_impl(func_name, func_stack, "return from");
+  // if (func_name == func_stack.back()) {
+  //   // if the function name matches the top of the stack, pop it
+  //   pop_func_impl(func_name, func_stack, "return from");
+  // } else {
+  //   while (func_name != func_stack.back()) {
+  //     pop_func_impl(func_stack.back().c_str(), func_stack, "unwind from",
+  //     true);
+  //   }
+  //   pop_func_impl(func_name, func_stack, "return from");
+  // }
 }
 
 void push_func(const char *func_name) {
@@ -428,7 +432,7 @@ void loop_entry(const char *loop_loc) {
   }
 }
 
-void loop_end(const char *header_loc, const char *out_loc) {
+void loop_out(const char *header_loc, const char *out_loc) {
   LoopStack &loop_stack = get_loop_stack();
   if (loop_stack.empty()) {
     // if the stack is empty, this is an error
@@ -510,5 +514,40 @@ void ubv_rec(const char *loc, bool val) {
 void select_rec(const char *loc, bool val) {
   std::stringstream ss;
   ss << "Select Guard: " << loc << " " << val;
+  print_rec_to_file_with_guard(ss.str().c_str());
+}
+
+/**
+  Setjmp and Longjmp handle
+*/
+
+void stack_rollback(const char *func_name, int stk_size) {
+  FuncStack &func_stack = get_func_stack();
+  while ((int)func_stack.size() > stk_size) {
+    pop_func_impl(func_stack.back().c_str(), func_stack, "longjmp unwind",
+                  true);
+  }
+}
+
+void setjmp_guard(int ret_val, const char *func_name, const char *loc) {
+  static int stk_size = -1;
+
+  if (ret_val == 0) {
+    // pre setjmp
+    stk_size = get_func_stack().size();
+  } else {
+    // post setjmp: func stack rollback handle
+    stack_rollback(func_name, stk_size);
+  }
+  assert(stk_size >= 0 && "Current stack size should not be minus");
+
+  // action record output
+  std::stringstream ss;
+  if (ret_val == 0) {
+    ss << "Pre Setjmp: ";
+  } else {
+    ss << "Post Setjmp: ";
+  }
+  ss << func_name << " " << stk_size << " " << loc;
   print_rec_to_file_with_guard(ss.str().c_str());
 }

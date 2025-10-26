@@ -367,7 +367,7 @@ impl UBVHit {
     }
 }
 // pub type FuncBrStack = Vec<FuncEntry>;
-pub struct ThreadExecTree {
+pub struct ExecThreadTree {
     tid: usize,
     cur_node_ptr: SharedFuncNodePtr,
     pub root_ptr: SharedFuncNodePtr,
@@ -376,7 +376,7 @@ pub struct ThreadExecTree {
     // data: Vec<FuncNode>,
 }
 
-impl ThreadExecTree {
+impl ExecThreadTree {
     fn parse_tid<P: AsRef<Path>>(fpath: P) -> Result<usize> {
         let fname = fpath
             .as_ref()
@@ -795,7 +795,7 @@ impl ThreadExecTree {
         fs_path: P,
         proj_info: &ProjectInfo,
     ) -> Result<(Self, THCPMAPPING)> {
-        let mut exec_tree: ThreadExecTree = ThreadExecTree::new(fs_path.as_ref())?;
+        let mut exec_tree: ExecThreadTree = ExecThreadTree::new(fs_path.as_ref())?;
         let mut thcp_mapping = HashMap::new();
 
         let file = File::open(fs_path.as_ref())?;
@@ -828,7 +828,7 @@ impl ThreadExecTree {
     // pub fn from_guard_file_impl(fs_path: &Path) -> Result<(Self, THCPMAPPING)> {}
 }
 
-impl fmt::Debug for ThreadExecTree {
+impl fmt::Debug for ExecThreadTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let root = self.root_ptr.borrow();
         writeln!(f, "ExecTree:")?;
@@ -864,8 +864,8 @@ pub type Tid = usize;
 pub type THCPEntry = (Tid, ActionPoint);
 pub type THCPMAPPING = HashMap<Tid, ActionPoint>;
 pub struct ExecForest {
-    main_tree: ThreadExecTree,
-    sub_trees: Vec<ThreadExecTree>,
+    main_tree: ExecThreadTree,
+    sub_trees: Vec<ExecThreadTree>,
     /// means mapping for thread id to thread creation action point
     thcp_mapping: THCPMAPPING,
 }
