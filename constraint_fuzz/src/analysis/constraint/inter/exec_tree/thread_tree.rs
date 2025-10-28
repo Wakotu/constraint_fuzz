@@ -17,7 +17,7 @@ use std::{
 };
 use tokio::join;
 
-use crate::analysis::constraint::inter::error::GuardParseError;
+use crate::analysis::constraint::inter::error::ActrecParseError;
 use crate::analysis::constraint::inter::exec_tree::action::{
     get_prefix, ExecAction, FuncAction, FuncCallAction, JumpAction, LoopAction, RecurAction,
     SelectAction, ThreadAction,
@@ -339,10 +339,10 @@ impl UBVHit {
     pub fn get_line(&self) -> Option<usize> {
         self.loc.get_line()
     }
-    pub fn parse_ubv_hit_rec(line: &str) -> std::result::Result<UBVHit, GuardParseError> {
+    pub fn parse_ubv_hit_rec(line: &str) -> std::result::Result<UBVHit, ActrecParseError> {
         const VAL_PREFIX: &str = "Unconditional Branch Value:";
         if !line.starts_with(VAL_PREFIX) {
-            return Err(GuardParseError::PrefixError {
+            return Err(ActrecParseError::PrefixError {
                 data: eyre::eyre!("UBV Hit Parse: prefix doesn't match"),
             });
         }
@@ -357,7 +357,7 @@ impl UBVHit {
             "0" => false,
             "1" => true,
             _ => {
-                return Err(GuardParseError::as_parse_err(eyre::eyre!(
+                return Err(ActrecParseError::as_parse_err(eyre::eyre!(
                     "UBV Hit Parse: invalid val string"
                 )))
             }
@@ -457,30 +457,32 @@ impl ExecThreadTree {
     fn parse_guard_impl(
         &self,
         line: &str,
-    ) -> std::result::Result<(Option<ExecAction>, Option<THCPEntry>), GuardParseError> {
+    ) -> std::result::Result<(Option<ExecAction>, Option<THCPEntry>), ActrecParseError> {
         // value hit
-        if let Some(ubv_hit) = GuardParseError::to_eyre(UBVHit::parse_ubv_hit_rec(line))? {
+        if let Some(ubv_hit) = ActrecParseError::to_eyre(UBVHit::parse_ubv_hit_rec(line))? {
             return Ok((Some(ExecAction::UBV(ubv_hit)), None));
         }
         // parse for select action records
-        if let Some(sel_act) = GuardParseError::to_eyre(SelectAction::parse_select_act_rec(line))? {
+        if let Some(sel_act) = ActrecParseError::to_eyre(SelectAction::parse_select_act_rec(line))?
+        {
             return Ok((Some(ExecAction::Select(sel_act)), None));
         }
         // simple guards
-        if let Some(intra_act) = GuardParseError::to_eyre(JumpAction::parse_jump_act_rec(line))? {
+        if let Some(intra_act) = ActrecParseError::to_eyre(JumpAction::parse_jump_act_rec(line))? {
             return Ok((Some(ExecAction::Intra(intra_act)), None));
         }
         // Loop Guard
-        if let Some(loop_act) = GuardParseError::to_eyre(LoopAction::parse_loop_act_rec(line))? {
+        if let Some(loop_act) = ActrecParseError::to_eyre(LoopAction::parse_loop_act_rec(line))? {
             return Ok((Some(ExecAction::Loop(loop_act)), None));
         }
         // Recur Guard
-        if let Some(recur_act) = GuardParseError::to_eyre(RecurAction::parse_recur_act_rec(line))? {
+        if let Some(recur_act) = ActrecParseError::to_eyre(RecurAction::parse_recur_act_rec(line))?
+        {
             return Ok((Some(ExecAction::Recur(recur_act)), None));
         }
         // Thread Guard
         if let Some(thread_act) =
-            GuardParseError::to_eyre(ThreadAction::parse_thread_act_rec(line))?
+            ActrecParseError::to_eyre(ThreadAction::parse_thread_act_rec(line))?
         {
             // construct a thcp entry
             let func_node_ptr = self.cur_node_ptr.clone();
@@ -508,14 +510,14 @@ impl ExecThreadTree {
 
         loop {
             parse_res = self.parse_guard_impl(parse_content);
-            if let Err(GuardParseError::SkipError { data: _, skip_num }) = parse_res {
+            if let Err(ActrecParseError::SkipError { data: _, skip_num }) = parse_res {
                 // if SkipError, skip the number of characters and try again
                 parse_content = &parse_content[skip_num..];
             } else {
                 break;
             }
         }
-        GuardParseError::to_eyre_ultimate(parse_res)
+        ActrecParseError::to_eyre_ultimate(parse_res)
     }
 
     //// add record to current entry
@@ -526,7 +528,7 @@ impl ExecThreadTree {
         Ok(())
     }
 
-    fn create_func_act(&self, line: &str) -> std::result::Result<FuncAction, GuardParseError> {
+    fn create_func_act(&self, line: &str) -> std::result::Result<FuncAction, ActrecParseError> {
         if let Ok(return_act) = FuncAction::parse_return_guard(line) {
             return Ok(return_act);
         }

@@ -294,7 +294,7 @@ void stack_rollback(const char *func_name, std::size_t stk_size) {
   RuntimeContext &ctx = ctx_map.get_ctx();
   while (ctx.get_func_stack_size() > stk_size) {
     std::string cur_func = ctx.func_unwind();
-    print_func_rec_to_file("longjmp unwind", cur_func.c_str());
+    print_func_rec_to_file("Longjmp Unwind: ", cur_func.c_str());
   }
   // func clear loop stack
   ctx.func_clear_loops();

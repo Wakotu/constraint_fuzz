@@ -5,20 +5,24 @@ use std::path::Path;
 use color_eyre::eyre::bail;
 
 use crate::analysis::constraint::inter::{
-    error::GuardParseError,
+    error::ActrecParseError,
     exec_tree::thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
     loc::SrcLocEnum,
 };
 
+use rollback::RollbackAction;
+
+pub mod rollback;
+
 /// Get the prefix of a line, which is the substring from the start to the first occurrence of ':'.
 /// Contains `:` at the end.
-pub fn get_prefix(line: &str) -> std::result::Result<&str, GuardParseError> {
+pub fn get_prefix(line: &str) -> std::result::Result<&str, ActrecParseError> {
     // get position of ':' in the line
     if let Some(pos) = line.find(':') {
         // return the substring from the start to the position of ':'
         Ok(&line[..pos + 1])
     } else {
-        Err(GuardParseError::as_prefix_err(eyre::eyre!(
+        Err(ActrecParseError::as_prefix_err(eyre::eyre!(
             "Line does not contain a colon: {}",
             line
         )))
@@ -170,7 +174,7 @@ impl FuncAction {
     /// parse a line of call guard to get (invoc_loc_op, func_name)
     pub fn parse_call_guard(
         line: &str,
-    ) -> std::result::Result<(Option<SrcLocEnum>, String), GuardParseError> {
+    ) -> std::result::Result<(Option<SrcLocEnum>, String), ActrecParseError> {
         let (invoc_loc_op, pref_len) = match Self::parse_invoc_part(line) {
             Ok((loc, len)) => (Some(loc), len),
             Err(e) => {
@@ -184,7 +188,7 @@ impl FuncAction {
             Ok(name) => name,
             Err(e) => {
                 log::warn!("Failed to parse entry part: {}", e);
-                return Err(GuardParseError::as_skip_err(e, pref_len));
+                return Err(ActrecParseError::as_skip_err(e, pref_len));
             }
         };
 
@@ -269,10 +273,10 @@ impl fmt::Debug for JumpAction {
 }
 
 impl JumpAction {
-    fn parse_simple_guard(line: &str) -> std::result::Result<Self, GuardParseError> {
+    fn parse_simple_guard(line: &str) -> std::result::Result<Self, ActrecParseError> {
         let prefix = get_prefix(line)?;
         let intra_type = JumpActionType::from_simple_prefix(prefix).ok_or_else(|| {
-            GuardParseError::as_prefix_err(eyre::eyre!(
+            ActrecParseError::as_prefix_err(eyre::eyre!(
                 "Unknown intra action type prefix: {}",
                 prefix
             ))
@@ -292,7 +296,7 @@ impl JumpAction {
             "1" => true,
             "0" => false,
             _ => {
-                return Err(GuardParseError::from(eyre::eyre!(
+                return Err(ActrecParseError::from(eyre::eyre!(
                     "Unexpected condition value: {}",
                     cond_val_str
                 )));
@@ -311,15 +315,15 @@ impl JumpAction {
         })
     }
 
-    pub fn parse_jump_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
-        if let Some(simple_action) = GuardParseError::to_eyre(Self::parse_simple_guard(line))? {
+    pub fn parse_jump_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
+        if let Some(simple_action) = ActrecParseError::to_eyre(Self::parse_simple_guard(line))? {
             return Ok(simple_action);
         }
 
         const REG_BR_PREFIX: &str = "Br Guard:";
         let prefix = get_prefix(line)?;
         if prefix != REG_BR_PREFIX {
-            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+            return Err(ActrecParseError::as_prefix_err(eyre::eyre!(
                 "Line does not match regular branch guard prefix: {}",
                 line
             )));
@@ -341,7 +345,7 @@ impl JumpAction {
         }
 
         // if line does not match any known action, return error
-        Err(GuardParseError::from(eyre::eyre!(
+        Err(ActrecParseError::from(eyre::eyre!(
             "Line does not match any known action format: {}",
             line
         )))
@@ -384,9 +388,9 @@ impl ThreadAction {
         self.tid
     }
 
-    pub fn parse_thread_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_thread_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
         if !line.starts_with(Self::THREAD_ACTION_PREFIX) {
-            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+            return Err(ActrecParseError::as_prefix_err(eyre::eyre!(
                 "Line does not start with 'Thread Creation:': {}",
                 line
             )));
@@ -396,7 +400,7 @@ impl ThreadAction {
 
         let parts: Vec<&str> = content.split_whitespace().collect();
         if parts.len() != 2 {
-            return Err(GuardParseError::as_parse_err(eyre::eyre!(
+            return Err(ActrecParseError::as_parse_err(eyre::eyre!(
                 "Expected at least 3 parts in thread guard, found {}: {}",
                 parts.len(),
                 line
@@ -405,7 +409,7 @@ impl ThreadAction {
 
         let loc = SrcLocEnum::from_str(parts[0])?;
         let tid = parts[1].parse::<Tid>().map_err(|_| {
-            GuardParseError::as_parse_err(eyre::eyre!(
+            ActrecParseError::as_parse_err(eyre::eyre!(
                 "Failed to parse thread ID from part: {}",
                 parts[2]
             ))
@@ -568,7 +572,7 @@ impl LoopAction {
     //     SrcLoc::from_str(content_slice)
     // }
 
-    pub fn parse_loop_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_loop_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
         let prefix = get_prefix(line)?;
 
         // Loop Entry Guards
@@ -613,7 +617,7 @@ impl LoopAction {
             });
         }
 
-        Err(GuardParseError::as_prefix_err(eyre::eyre!(
+        Err(ActrecParseError::as_prefix_err(eyre::eyre!(
             "Line does not match any known loop action type: {}",
             line
         )))
@@ -688,11 +692,11 @@ pub enum RecurAction {
 }
 
 impl RecurAction {
-    pub fn parse_recur_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_recur_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
         match line {
             "Recur Lock locked" => Ok(RecurAction::Locked),
             "Recur Lock released" => Ok(RecurAction::Released),
-            _ => Err(GuardParseError::as_prefix_err(eyre::eyre!(
+            _ => Err(ActrecParseError::as_prefix_err(eyre::eyre!(
                 "
                 Line does not match any known recur action type: {}",
                 line
@@ -717,10 +721,10 @@ impl SelectAction {
     pub fn get_loc(&self) -> &SrcLocEnum {
         &self.loc
     }
-    pub fn parse_select_act_rec(line: &str) -> std::result::Result<Self, GuardParseError> {
+    pub fn parse_select_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
         const SEL_PREFIX: &str = "Select Guard: ";
         if !line.starts_with(SEL_PREFIX) {
-            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+            return Err(ActrecParseError::as_prefix_err(eyre::eyre!(
                 "
                 Line does not start with select guard prefix: {}",
                 line
@@ -736,7 +740,7 @@ impl SelectAction {
             "0" => false,
             "1" => true,
             _ => {
-                return Err(GuardParseError::as_parse_err(eyre::eyre!(
+                return Err(ActrecParseError::as_parse_err(eyre::eyre!(
                     "Select Action Record parse: invalid val string"
                 )))
             }
@@ -755,6 +759,7 @@ pub enum ExecAction {
     Loop(LoopAction),
     Recur(RecurAction),
     Thread(ThreadAction),
+    Rollback(RollbackAction),
 }
 
 impl ExecAction {
@@ -846,6 +851,7 @@ impl ExecAction {
             ExecAction::Loop(loop_act) => Some(&loop_act.header_loc),
             ExecAction::Recur(_) => None,
             ExecAction::Thread(thread_act) => Some(&thread_act.loc),
+            ExecAction::Rollback(rb_act) => rb_act.get_loc(),
         }
     }
 

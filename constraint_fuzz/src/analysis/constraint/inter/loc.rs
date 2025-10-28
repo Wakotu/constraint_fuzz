@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    analysis::constraint::inter::error::GuardParseError,
+    analysis::constraint::inter::error::ActrecParseError,
     feedback::{
         branches::constraints::{Loc, LocTrait, Range, RangeTrait, UBConstraint},
         clang_coverage::{BranchCount, CovBranch, CovFunction},
@@ -107,9 +107,9 @@ impl SrcLocEnum {
     pub fn parse_line_with_prefix(
         line: &str,
         prefix: &str,
-    ) -> std::result::Result<Self, GuardParseError> {
+    ) -> std::result::Result<Self, ActrecParseError> {
         if !line.starts_with(prefix) {
-            return Err(GuardParseError::as_prefix_err(eyre::eyre!(
+            return Err(ActrecParseError::as_prefix_err(eyre::eyre!(
                 "Line does not start with expected prefix: {}",
                 prefix
             )));
