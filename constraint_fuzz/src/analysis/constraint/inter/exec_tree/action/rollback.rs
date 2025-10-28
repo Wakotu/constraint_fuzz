@@ -2,7 +2,7 @@ use eyre::eyre;
 
 use crate::analysis::constraint::inter::{error::ActrecParseError, loc::SrcLocEnum};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LongjmpAction {
     pub invoc_loc: SrcLocEnum,
 }
@@ -18,7 +18,10 @@ impl LongjmpAction {
         let content = line[Self::LONGJMP_PREFIX.len()..].trim();
         let parts: Vec<&str> = content.split_whitespace().collect();
         if parts.len() != 1 {
-            eyre!("Longjmp action malformed, not 1 part: {}", line);
+            return Err(ActrecParseError::as_parse_err(eyre!(
+                "Longjmp action malformed, not 1 part: {}",
+                line,
+            )));
         }
         let invoc_loc = SrcLocEnum::from_str(
             parts
@@ -29,7 +32,7 @@ impl LongjmpAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnwindAction {
     pub func_name: String,
 }
@@ -52,7 +55,7 @@ impl UnwindAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SJVariant {
     PreLong,
     PostLong,
@@ -72,7 +75,7 @@ impl SJVariant {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SetjmpAction {
     sj_variants: SJVariant,
     pub func_name: String,
@@ -92,7 +95,10 @@ impl SetjmpAction {
         };
         let parts: Vec<&str> = content.trim().split_whitespace().collect();
         if parts.len() != 3 {
-            eyre!("Setjmp action malformed, not 3 parts: {}", line);
+            return Err(ActrecParseError::as_parse_err(eyre!(
+                "Setjmp action malformed, not 3 parts: {}",
+                line
+            )));
         }
 
         let func_name = parts
@@ -117,7 +123,7 @@ impl SetjmpAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RollbackAction {
     Longjmp(LongjmpAction),
     Setjmp(SetjmpAction),
@@ -146,6 +152,14 @@ impl RollbackAction {
             RollbackAction::Longjmp(lj_act) => Some(&lj_act.invoc_loc),
             RollbackAction::Setjmp(sj_act) => Some(&sj_act.invoc_loc),
             RollbackAction::Unwind(_) => None,
+        }
+    }
+
+    pub fn plain_stmt_suitable(&self) -> bool {
+        match self {
+            RollbackAction::Longjmp(_) => true,
+            RollbackAction::Setjmp(_) => true,
+            RollbackAction::Unwind(_) => false,
         }
     }
 }

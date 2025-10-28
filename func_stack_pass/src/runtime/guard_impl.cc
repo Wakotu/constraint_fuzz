@@ -31,18 +31,13 @@ namespace fs = std::filesystem;
 void print_func_rec_to_file(const char *prmp, const char *func_name);
 using Tid = std::thread::id;
 
+// Runtime Context definition
+RuntimeCtxMap ctx_map;
+
 static std::unordered_map<Tid, std::ofstream> of_map;
 std::mutex of_map_mutex;
 
-void sig_handler(int sig) {
-  if (sig == SIGINT) {
-    for (auto &it : of_map) {
-      auto &out = it.second;
-      out.close();
-    }
-    std::exit(sig);
-  }
-}
+void sig_handler(int sig) { ctx_map.close_all_outf(); }
 
 void __attribute__((constructor)) setup_sig_handler() {
   signal(SIGINT, sig_handler);
@@ -126,9 +121,6 @@ std::ofstream &get_of() {
 //     LOG_FILE("%s\n", it->c_str());
 //   }
 // }
-
-// Runtime Context definition
-RuntimeCtxMap ctx_map;
 
 void print_func_rec_to_file(const char *prmp, const char *func_name) {
   std::string deman = demangle(func_name);

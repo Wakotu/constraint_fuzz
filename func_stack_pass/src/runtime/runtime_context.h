@@ -2,6 +2,7 @@
 #define _RUNTIME_STACK_H_
 
 #include <cstddef>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -126,6 +127,9 @@ class RuntimeContext {
 
   // stack state
   FuncStack func_stk;
+  std::ofstream out_f;
+
+  static bool is_main;
 
   void set_recur_lock();
 
@@ -134,9 +138,15 @@ class RuntimeContext {
 
   void pop_func_impl();
   void update_loop_lock();
+  void loop_lock_off();
+  void loop_lock_on();
 
 public:
-  RuntimeContext() : loop_lock(false), recur_lock(), func_stk() {}
+  RuntimeContext();
+
+  // file related
+  void close_outf();
+
   // should be invoked after func stack push
   void try_recur_lock();
   // should be invoked before func stack pop
@@ -164,6 +174,8 @@ class RuntimeCtxMap {
 
 public:
   RuntimeContext &get_ctx();
+  void close_all_outf();
+
   void push_func(const char *func_name);
   void pop_func(const char *func_name);
   // returns true if loop lock is set at this action

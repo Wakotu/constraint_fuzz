@@ -873,6 +873,7 @@ impl ExecAction {
             ExecAction::Loop(_) => false,
             ExecAction::Recur(_) => false,
             ExecAction::Thread(_) => true,
+            ExecAction::Rollback(rb_act) => rb_act.plain_stmt_suitable(),
         }
     }
 }
@@ -912,6 +913,7 @@ impl DotId for ExecAction {
                 RecurAction::Released => format!("Recur_Release_Action_{}", cnt),
             },
             ExecAction::Thread(_) => format!("Thread_Action_{}", cnt),
+            ExecAction::Rollback(_) => format!("Rollback_Action_{}", cnt),
         }
     }
 }
@@ -934,6 +936,9 @@ impl fmt::Debug for ExecAction {
                     "ThreadAction: loc: {:?}, tid: {}",
                     thread_act.loc, thread_act.tid
                 )
+            }
+            ExecAction::Rollback(rb_act) => {
+                write!(f, "RollbackAction: {:?}", rb_act)
             }
         }
     }

@@ -2,11 +2,19 @@
 #include "config.h"
 #include <cassert>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+
+namespace fs = std::filesystem;
+
+// definition
+bool RuntimeContext::is_main = true;
 
 void FuncStack::push(const char *func_name) {
   FuncEntry ent(func_name);
@@ -51,11 +59,15 @@ void RecurLock::lock(std::string_view func_name, std::size_t stk_size) {
   RecurFrame frame(func_name, stk_size);
   this->value = true;
   this->frame = frame;
+
+  // record output
 }
 
 void RecurLock::release() {
   this->value = false;
   this->frame = std::nullopt;
+
+  // record output
 }
 
 bool RecurLock::matches(std::string_view func_name,
@@ -95,6 +107,16 @@ void RuntimeContext::try_recur_release() {
 }
 
 bool FuncStack::top_loop_empty() const { return const_top_func().loop_emty(); }
+
+void RuntimeContext::loop_lock_on() {
+  loop_lock = true;
+  // record output
+}
+
+void RuntimeContext::loop_lock_off() {
+  loop_lock = false;
+  // record output
+}
 
 void RuntimeContext::pop_func_impl() {
   try_recur_release();
@@ -226,6 +248,62 @@ LoopPopResult RuntimeContext::loop_out(const char *loop_loc) {
   return res;
 }
 
+RuntimeContext::RuntimeContext() : loop_lock(false), recur_lock(), func_stk() {
+  static bool first = true;
+
+  const char *out_str = std::getenv(OUTPUT_ENV_VAR);
+  if (!out_str) {
+    out_str = "func_stack_logs";
+  }
+  fs::path out_dir(out_str);
+
+  if (!fs::is_directory(out_dir)) {
+    if (fs::is_regular_file(out_dir)) {
+      fs::remove(out_dir);
+    }
+    try {
+
+      bool flag = fs::create_directories(out_dir);
+      if (!flag) {
+        std::cerr << "Failed to create directory: " << out_dir << "\n";
+        exit(1);
+      }
+    } catch (const std::filesystem::filesystem_error &e) {
+      std::cerr << "Error: " << e.what() << "\n";
+      exit(1);
+    }
+  }
+
+  std::stringstream ss;
+
+  // actually output dir
+  Tid tid = std::this_thread::get_id();
+  ss << tid;
+  if (is_main) {
+    ss << "_main";
+  }
+  std::string fname_str = ss.str();
+
+  // std::cerr << "fname: " << fname_str << "\n";
+
+  fs::path fname(fname_str);
+  fs::path fpath = out_dir / fname;
+
+  out_f.open(fpath, std::ios::out);
+  if (!out_f.is_open()) {
+    std::cerr << "Failed to open file: " << fpath << "\n";
+    std::exit(1);
+  }
+
+  is_main = false;
+}
+
+void RuntimeContext::close_outf() {
+  if (out_f.is_open()) {
+    out_f.close();
+  }
+}
+
 RuntimeContext &RuntimeCtxMap::get_ctx() {
   Tid tid = std::this_thread::get_id();
 
@@ -296,4 +374,11 @@ void RuntimeContext::func_clear_loops() {
 std::string RuntimeCtxMap::func_unwind() {
   RuntimeContext &ctx = get_ctx();
   return ctx.func_unwind();
+}
+
+void RuntimeCtxMap::close_all_outf() {
+  std::lock_guard<std::mutex> lock(mtx);
+  for (auto &pair : ctx_map) {
+    pair.second.close_outf();
+  }
 }
