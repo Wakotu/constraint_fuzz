@@ -6,12 +6,16 @@ use color_eyre::eyre::bail;
 
 use crate::analysis::constraint::inter::{
     error::ActrecParseError,
-    exec_tree::thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
+    exec_tree::{
+        action::lock::{LockAction, LoopLockAct, RecurLockAct},
+        thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
+    },
     loc::SrcLocEnum,
 };
 
 use rollback::RollbackAction;
 
+pub mod lock;
 pub mod rollback;
 
 /// Get the prefix of a line, which is the substring from the start to the first occurrence of ':'.
@@ -686,26 +690,6 @@ impl fmt::Debug for LoopAction {
 }
 
 #[derive(Clone)]
-pub enum RecurAction {
-    Locked,
-    Released,
-}
-
-impl RecurAction {
-    pub fn parse_recur_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {
-        match line {
-            "Recur Lock locked" => Ok(RecurAction::Locked),
-            "Recur Lock released" => Ok(RecurAction::Released),
-            _ => Err(ActrecParseError::as_prefix_err(eyre::eyre!(
-                "
-                Line does not match any known recur action type: {}",
-                line
-            ))),
-        }
-    }
-}
-
-#[derive(Clone)]
 pub struct SelectAction {
     pub loc: SrcLocEnum,
     pub val: bool,
@@ -757,9 +741,10 @@ pub enum ExecAction {
     UBV(UBVHit),
     Select(SelectAction),
     Loop(LoopAction),
-    Recur(RecurAction),
+    // Recur(RecurLock),
     Thread(ThreadAction),
     Rollback(RollbackAction),
+    Lock(LockAction),
 }
 
 impl ExecAction {
@@ -849,7 +834,7 @@ impl ExecAction {
             },
             ExecAction::Intra(intra_act) => Some(&intra_act.from_loc),
             ExecAction::Loop(loop_act) => Some(&loop_act.header_loc),
-            ExecAction::Recur(_) => None,
+            ExecAction::Lock(_) => None,
             ExecAction::Thread(thread_act) => Some(&thread_act.loc),
             ExecAction::Rollback(rb_act) => rb_act.get_loc(),
         }
@@ -871,9 +856,9 @@ impl ExecAction {
                 JumpActionType::IndirectBr => false,
             },
             ExecAction::Loop(_) => false,
-            ExecAction::Recur(_) => false,
             ExecAction::Thread(_) => true,
             ExecAction::Rollback(rb_act) => rb_act.plain_stmt_suitable(),
+            ExecAction::Lock(_) => false,
         }
     }
 }
@@ -908,10 +893,21 @@ impl DotId for ExecAction {
             ExecAction::Func(func_act) => func_act.get_dot_id(cnt),
             ExecAction::Intra(intra_act) => intra_act.get_dot_id(cnt),
             ExecAction::Loop(_) => format!("Loop_Action_{}", cnt),
-            ExecAction::Recur(recur_act) => match recur_act {
-                RecurAction::Locked => format!("Recur_Lock_Action_{}", cnt),
-                RecurAction::Released => format!("Recur_Release_Action_{}", cnt),
+            ExecAction::Lock(lock_act) => match lock_act {
+                LockAction::Recur(RecurLockAct::Locked) => {
+                    format!("Recur_Lock_Action_{}", cnt)
+                }
+                LockAction::Recur(RecurLockAct::Released) => {
+                    format!("Recur_Unlock_Action_{}", cnt)
+                }
+                LockAction::Loop(LoopLockAct::Locked) => {
+                    format!("Loop_Lock_Action_{}", cnt)
+                }
+                LockAction::Loop(LoopLockAct::Released) => {
+                    format!("Loop_Unlock_Action_{}", cnt)
+                }
             },
+
             ExecAction::Thread(_) => format!("Thread_Action_{}", cnt),
             ExecAction::Rollback(_) => format!("Rollback_Action_{}", cnt),
         }
@@ -926,9 +922,15 @@ impl fmt::Debug for ExecAction {
             ExecAction::Func(func_act) => write!(f, "FuncAction: {:?}", func_act),
             ExecAction::Intra(intra_act) => write!(f, "IntraAction: {:?}", intra_act),
             ExecAction::Loop(loop_act) => write!(f, "LoopAction: {:?}", loop_act),
-            ExecAction::Recur(recur_act) => match recur_act {
-                RecurAction::Locked => write!(f, "RecurAction: Locked"),
-                RecurAction::Released => write!(f, "RecurAction: Released"),
+            ExecAction::Lock(lock_act) => match lock_act {
+                LockAction::Loop(loop_act) => match loop_act {
+                    LoopLockAct::Locked => write!(f, "LoopAction: Locked"),
+                    LoopLockAct::Released => write!(f, "LoopAction: Released"),
+                },
+                LockAction::Recur(recur_act) => match recur_act {
+                    RecurLockAct::Locked => write!(f, "RecurAction: Locked"),
+                    RecurLockAct::Released => write!(f, "RecurAction: Released"),
+                },
             },
             ExecAction::Thread(thread_act) => {
                 write!(

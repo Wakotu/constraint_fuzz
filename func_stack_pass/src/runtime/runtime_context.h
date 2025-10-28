@@ -146,10 +146,14 @@ public:
 
   // file related
   void close_outf();
+  void print_content_wo_lock(const char *content);
+  void print_content_with_lock(const char *content);
+  void print_content_with_recur_check(const char *content);
 
   // should be invoked after func stack push
   void try_recur_lock();
   // should be invoked before func stack pop
+  void recur_release();
   void try_recur_release();
 
   // lock check methods
@@ -174,7 +178,12 @@ class RuntimeCtxMap {
 
 public:
   RuntimeContext &get_ctx();
+
   void close_all_outf();
+
+  void print_content_wo_lock(const char *content);
+  void print_content_with_lock(const char *content);
+  void print_content_with_recur_check(const char *content);
 
   void push_func(const char *func_name);
   void pop_func(const char *func_name);

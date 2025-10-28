@@ -7,7 +7,7 @@ use crate::{
     analysis::constraint::{
         inter::{
             exec_tree::{
-                action::{ExecAction, FuncAction, LoopAction, RecurAction},
+                action::{ExecAction, FuncAction, LoopAction, RecurLockAct},
                 thread_tree::{ExecFuncNode, FuncActIter, SharedFuncNodePtr},
                 ExecForest,
             },
@@ -328,14 +328,14 @@ impl<'a> StmtCollector<'a> {
         let first_act = act_iter
             .next()
             .ok_or_else(|| eyre::eyre!("Function node should have at least one action"))?;
-        if let ExecAction::Recur(RecurAction::Locked) = first_act {
+        if let ExecAction::Recur(RecurLockAct::Locked) = first_act {
             let second_act = act_iter.next().ok_or_else(|| {
                 eyre::eyre!(
                     "Function node should have at least two actions when first is Recur Locked"
                 )
             })?;
             assert!(
-                matches!(second_act, ExecAction::Recur(RecurAction::Released)),
+                matches!(second_act, ExecAction::Recur(RecurLockAct::Released)),
                 "Second Action should be Recur Released action"
             );
             Ok(true)

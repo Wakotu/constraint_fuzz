@@ -1,5 +1,6 @@
 #include "runtime_context.h"
 #include "config.h"
+#include "runtime/guard_impl.h"
 #include <cassert>
 #include <cstddef>
 #include <filesystem>
@@ -59,15 +60,11 @@ void RecurLock::lock(std::string_view func_name, std::size_t stk_size) {
   RecurFrame frame(func_name, stk_size);
   this->value = true;
   this->frame = frame;
-
-  // record output
 }
 
 void RecurLock::release() {
   this->value = false;
   this->frame = std::nullopt;
-
-  // record output
 }
 
 bool RecurLock::matches(std::string_view func_name,
@@ -79,12 +76,14 @@ bool RecurLock::matches(std::string_view func_name,
 
 void RuntimeContext::set_recur_lock() {
   recur_lock.lock(func_stk.top_func_name(), func_stk.size());
+  print_content_with_lock("Recur Lock locked\n");
 }
 
 void RuntimeContext::try_recur_lock() {
   bool flag = func_stk.check_recur();
   if (!flag)
     return;
+  set_recur_lock();
 }
 
 void RuntimeContext::push_func(const char *func_name) {
@@ -92,6 +91,11 @@ void RuntimeContext::push_func(const char *func_name) {
   func_stk.push(func_name);
   // lock update
   try_recur_lock();
+}
+
+void RuntimeContext::recur_release() {
+  recur_lock.release();
+  print_content_with_lock("Recur Lock released\n");
 }
 
 void RuntimeContext::try_recur_release() {
@@ -103,7 +107,7 @@ void RuntimeContext::try_recur_release() {
   if (!recur_lock.matches(top_func, stk_size)) {
     return;
   }
-  recur_lock.release();
+  recur_release();
 }
 
 bool FuncStack::top_loop_empty() const { return const_top_func().loop_emty(); }
@@ -111,11 +115,13 @@ bool FuncStack::top_loop_empty() const { return const_top_func().loop_emty(); }
 void RuntimeContext::loop_lock_on() {
   loop_lock = true;
   // record output
+  print_content_with_lock("Loop Lock locked\n");
 }
 
 void RuntimeContext::loop_lock_off() {
   loop_lock = false;
   // record output
+  print_content_with_lock("Loop Lock released\n");
 }
 
 void RuntimeContext::pop_func_impl() {
@@ -381,4 +387,40 @@ void RuntimeCtxMap::close_all_outf() {
   for (auto &pair : ctx_map) {
     pair.second.close_outf();
   }
+}
+
+void RuntimeContext::print_content_wo_lock(const char *content) {
+  if (out_f.is_open()) {
+    out_f << content;
+    out_f.flush();
+  }
+}
+
+void RuntimeContext::print_content_with_lock(const char *content) {
+  if (is_locked()) {
+    return;
+  }
+  print_content_wo_lock(content);
+}
+
+void RuntimeCtxMap::print_content_wo_lock(const char *content) {
+  RuntimeContext &ctx = get_ctx();
+  ctx.print_content_wo_lock(content);
+}
+
+void RuntimeCtxMap::print_content_with_lock(const char *content) {
+  RuntimeContext &ctx = get_ctx();
+  ctx.print_content_with_lock(content);
+}
+
+void RuntimeContext::print_content_with_recur_check(const char *content) {
+  if (is_recur_locked()) {
+    return;
+  }
+  print_content_wo_lock(content);
+}
+
+void RuntimeCtxMap::print_content_with_recur_check(const char *content) {
+  RuntimeContext &ctx = get_ctx();
+  ctx.print_content_with_recur_check(content);
 }

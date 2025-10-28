@@ -43,72 +43,6 @@ void __attribute__((constructor)) setup_sig_handler() {
   signal(SIGINT, sig_handler);
 }
 
-std::ofstream &create_of(const Tid &tid) {
-  // std::cerr << "creating fp\n";
-  static bool first = true;
-
-  const char *out_str = std::getenv(OUTPUT_ENV_VAR);
-  if (!out_str) {
-    out_str = "func_stack_logs";
-  }
-  fs::path out_dir(out_str);
-
-  if (!fs::is_directory(out_dir)) {
-    if (fs::is_regular_file(out_dir)) {
-      fs::remove(out_dir);
-    }
-    try {
-
-      bool flag = fs::create_directories(out_dir);
-      if (!flag) {
-        std::cerr << "Failed to create directory: " << out_dir << "\n";
-        exit(1);
-      }
-    } catch (const std::filesystem::filesystem_error &e) {
-      std::cerr << "Error: " << e.what() << "\n";
-      exit(1);
-    }
-  }
-
-  std::stringstream ss;
-
-  // actually output dir
-  ss << tid;
-  if (first) {
-    ss << "_main";
-  }
-  std::string fname_str = ss.str();
-
-  // std::cerr << "fname: " << fname_str << "\n";
-
-  fs::path fname(fname_str);
-  fs::path fpath = out_dir / fname;
-
-  std::ofstream out(fpath);
-  if (!out.is_open()) {
-    std::cerr << "Failed to open file: " << fpath << "\n";
-    std::exit(1);
-  }
-
-  of_map[tid] = std::move(out);
-
-  first = false;
-
-  return of_map[tid];
-}
-
-std::ofstream &get_of() {
-
-  Tid tid = std::this_thread::get_id();
-
-  std::lock_guard<std::mutex> lock(of_map_mutex);
-  auto it = of_map.find(tid);
-  if (it != of_map.end()) {
-    return it->second;
-  }
-  return create_of(tid);
-}
-
 // #define LOG_FILE(fmt...)                                                       \
 //   do {                                                                         \
 //     FILE *fp = get_fp();                                                       \
@@ -162,29 +96,20 @@ Output Guard Implementation
 Output with No Guard Version
 */
 void print_content_to_file(const char *content) {
-  std::ofstream &out = get_of();
-  out << content;
+  ctx_map.print_content_wo_lock(content);
 }
 
 void print_rec_to_file_with_recur_check(const char *rec) {
-  if (ctx_map.is_recur_locked()) {
-    // if recursion is locked, do not print
-    return;
-  }
   std::stringstream ss;
   ss << rec << "\n";
-  print_content_to_file(ss.str().c_str());
+  ctx_map.print_content_with_recur_check(ss.str().c_str());
 }
 
 /**
 Output with Guard Version
 */
 void print_content_to_file_with_lockcheck(const char *content) {
-  if (ctx_map.is_locked()) {
-    // if guard is locked, do not print
-    return;
-  }
-  print_content_to_file(content);
+  ctx_map.print_content_with_lock(content);
 }
 
 void print_rec_to_file_with_lockcheck(const char *rec) {

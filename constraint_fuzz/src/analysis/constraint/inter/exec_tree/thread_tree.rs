@@ -18,8 +18,10 @@ use std::{
 use tokio::join;
 
 use crate::analysis::constraint::inter::error::ActrecParseError;
+use crate::analysis::constraint::inter::exec_tree::action::lock::LockAction;
+use crate::analysis::constraint::inter::exec_tree::action::rollback::RollbackAction;
 use crate::analysis::constraint::inter::exec_tree::action::{
-    get_prefix, ExecAction, FuncAction, FuncCallAction, JumpAction, LoopAction, RecurAction,
+    get_prefix, ExecAction, FuncAction, FuncCallAction, JumpAction, LoopAction, RecurLockAct,
     SelectAction, ThreadAction,
 };
 use crate::analysis::constraint::inter::exec_tree::analyze::FuncNodeLenEntry;
@@ -454,7 +456,7 @@ impl ExecThreadTree {
 
     /// May return 3 kinds of GuardParseError variants as error.
     /// Of which SkipError should be taken care of as a repeat signal
-    fn parse_guard_impl(
+    fn parse_actrec_impl(
         &self,
         line: &str,
     ) -> std::result::Result<(Option<ExecAction>, Option<THCPEntry>), ActrecParseError> {
@@ -475,10 +477,11 @@ impl ExecThreadTree {
         if let Some(loop_act) = ActrecParseError::to_eyre(LoopAction::parse_loop_act_rec(line))? {
             return Ok((Some(ExecAction::Loop(loop_act)), None));
         }
-        // Recur Guard
-        if let Some(recur_act) = ActrecParseError::to_eyre(RecurAction::parse_recur_act_rec(line))?
-        {
-            return Ok((Some(ExecAction::Recur(recur_act)), None));
+        if let Some(lock_act) = ActrecParseError::to_eyre(LockAction::from_line(line))? {
+            return Ok((Some(ExecAction::Lock(lock_act)), None));
+        }
+        if let Some(rb_act) = ActrecParseError::to_eyre(RollbackAction::from_line(line))? {
+            return Ok((Some(ExecAction::Rollback(rb_act)), None));
         }
         // Thread Guard
         if let Some(thread_act) =
@@ -499,7 +502,7 @@ impl ExecThreadTree {
         Ok((Some(ExecAction::Func(func_act)), None))
     }
 
-    fn parse_guard(&self, line: &str) -> Result<(Option<ExecAction>, Option<THCPEntry>)> {
+    fn parse_actrec(&self, line: &str) -> Result<(Option<ExecAction>, Option<THCPEntry>)> {
         // Skip Lines containing only Dest part of Jump action record
         if line.starts_with("0 ") || line.starts_with("1 ") {
             return Ok((None, None));
@@ -509,7 +512,7 @@ impl ExecThreadTree {
         let mut parse_content = line;
 
         loop {
-            parse_res = self.parse_guard_impl(parse_content);
+            parse_res = self.parse_actrec_impl(parse_content);
             if let Err(ActrecParseError::SkipError { data: _, skip_num }) = parse_res {
                 // if SkipError, skip the number of characters and try again
                 parse_content = &parse_content[skip_num..];
@@ -719,7 +722,7 @@ impl ExecThreadTree {
         proj_info: &ProjectInfo, // cons_op: Option<&Constraint>,
                                  // hit_cnt: &mut usize,
     ) -> Result<Option<THCPEntry>> {
-        let (act_op, thcp_entry_op) = self.parse_guard(line)?;
+        let (act_op, thcp_entry_op) = self.parse_actrec(line)?;
 
         if let Some(act) = act_op {
             // update context on unwind situation
