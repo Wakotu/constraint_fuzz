@@ -14,7 +14,10 @@ use eyre::bail;
 
 use crate::{
     analysis::constraint::{
-        inter::loc::{SrcLocEnum, ValidSrcLoc},
+        inter::{
+            exec_tree::action::rollback::SetjmpAction,
+            loc::{SrcLocEnum, ValidSrcLoc},
+        },
         intra::func_src_tree::{
             code_query::{
                 for_query::{ForCondMap, ForInitMap, ForRecord, ForUpdateMap},
@@ -53,6 +56,65 @@ impl QLLoc {
                 SrcLocEnum::Valid(valid_loc) => valid_loc.line == line_num,
             },
         }
+    }
+
+    // Get start loc of specific pattern
+    pub fn get_pattern_loc(&self, pat: &str) -> Result<Option<ValidSrcLoc>> {
+        let file = File::open(&self.file_path)?;
+        let reader = BufReader::new(file);
+        for (idx, line) in reader.lines().enumerate() {
+            let lineno = idx + 1;
+            let line = line?;
+            if lineno < self.start_line {
+                continue;
+            }
+            if lineno > self.end_line {
+                break;
+            }
+
+            if lineno == self.start_line && lineno == self.end_line {
+                let content = &line[self.start_column - 1..self.end_column];
+                if let Some(mat_idx) = content.find(pat) {
+                    let loc = ValidSrcLoc {
+                        file_path: self.file_path.clone(),
+                        line: lineno,
+                        col: self.start_column + mat_idx,
+                    };
+                    return Ok(Some(loc));
+                }
+            } else if lineno == self.start_line {
+                let content = &line[self.start_column - 1..];
+                if let Some(mat_idx) = content.find(pat) {
+                    let loc = ValidSrcLoc {
+                        file_path: self.file_path.clone(),
+                        line: lineno,
+                        col: self.start_column + mat_idx,
+                    };
+                    return Ok(Some(loc));
+                }
+            } else if lineno == self.end_line {
+                let content = &line[..self.end_column];
+                if let Some(mat_idx) = content.find(pat) {
+                    let loc = ValidSrcLoc {
+                        file_path: self.file_path.clone(),
+                        line: lineno,
+                        col: mat_idx + 1,
+                    };
+                    return Ok(Some(loc));
+                }
+            } else {
+                // inner line
+                if let Some(mat_idx) = line.find(pat) {
+                    let loc = ValidSrcLoc {
+                        file_path: self.file_path.clone(),
+                        line: lineno,
+                        col: mat_idx + 1,
+                    };
+                    return Ok(Some(loc));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// transform inner loc to relative loc in the newly returned string
@@ -422,6 +484,15 @@ pub struct ChildEntry {
 }
 
 impl ChildEntry {
+    pub fn get_setjmp_loc(&self) -> Result<Option<ValidSrcLoc>> {
+        assert!(
+            matches!(self.stmt_type, StmtType::Expr),
+            "Get setjmp location method should only be called at Expr entry"
+        );
+
+        todo!()
+    }
+
     pub fn get_label_name(&self) -> Result<(Option<String>, bool)> {
         if self.stmt_type.is_label() {
             if self.loc.is_point_loc() {
@@ -706,6 +777,38 @@ impl ForStmt {
             update_loc,
             body_entry,
         })
+    }
+}
+
+pub struct SetjmpDict {
+    data: HashMap<ValidSrcLoc, SharedStmtNodePtr>,
+}
+
+impl SetjmpDict {
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, loc: &ValidSrcLoc, ptr: SharedStmtNodePtr) -> Result<()> {
+        if self.data.contains_key(loc) {
+            bail!("Duplicate setjmp location found: {:?}", loc);
+        }
+        self.data.insert(loc.clone(), ptr);
+        Ok(())
+    }
+
+    pub fn get(&self, loc: &SrcLocEnum) -> Option<&SharedStmtNodePtr> {
+        let loc = match loc.get_validloc() {
+            None => return None,
+            Some(valid_loc) => valid_loc,
+        };
+        self.data.get(loc)
+    }
+
+    pub fn get_by_postsj(&self, postsj_act: &SetjmpAction) -> Option<&SharedStmtNodePtr> {
+        self.get(&postsj_act.invoc_loc)
     }
 }
 

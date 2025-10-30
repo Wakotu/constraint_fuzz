@@ -50,7 +50,7 @@ impl ExecForest {
     }
 
     pub fn from_guard_dir<P: AsRef<Path>>(guard_dir: P) -> Result<ExecForest> {
-        let proj_info = get_project_info();
+        // let proj_info = get_project_info();
         assert!(guard_dir.as_ref().is_dir());
         let mut tree_list = vec![];
         let mut thcp_mapping = HashMap::new();
@@ -66,7 +66,7 @@ impl ExecForest {
                 idx = tree_list.len();
             }
 
-            let (tree, sub_mapping) = ExecThreadTree::from_guard_file(&guard_fpath, proj_info)?;
+            let (tree, sub_mapping) = ExecThreadTree::from_guard_file(&guard_fpath)?;
 
             let tid = tree.get_tid();
             tid_mapping.insert(tid, tree_list.len());

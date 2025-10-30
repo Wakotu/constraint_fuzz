@@ -1,3 +1,4 @@
+use crate::analysis::constraint::inter::exec_tree::action::rollback::{RollbackAction, SJVariant};
 use crate::analysis::constraint::inter::exec_tree::action::{
     ExecAction, FuncAction, FuncCallAction, JumpActionType,
 };
@@ -485,21 +486,25 @@ impl<'a> InnerStmtHandler<'a> {
     /**
      * Function Invocation action handle
      */
-    fn func_invoc_handle(&mut self, call_act: &FuncCallAction) -> Result<()> {
+    fn func_invoc_handle(&mut self, call_act: &FuncCallAction) -> Result<bool> {
         let (start_idx, left_idx) = self.stmt_info.get_start_idxs(call_act)?;
         let (pre_pu_vec, right_idx) =
             self.pre_assign_stmts_construct(left_idx, &call_act.func_name)?;
         self.pu_vec.extend(pre_pu_vec);
 
         let called_func_tree = self.collector.get_src_func_tree(&call_act.func_name)?;
-        let (func_pu_vec, ret_var_op) = self
+        let (func_pu_vec, ret_var_op, is_rb) = self
             .collector
             .collect_intra(called_func_tree, call_act.child_ptr.clone())?;
         self.pu_vec.extend(func_pu_vec);
 
-        // return value handle: update subst recs
-        self.invoc_sub_recs.add(start_idx, right_idx, ret_var_op);
-        Ok(())
+        if is_rb {
+            Ok(true)
+        } else {
+            // return value handle: update subst recs
+            self.invoc_sub_recs.add(start_idx, right_idx, ret_var_op);
+            Ok(false)
+        }
     }
 
     /**
@@ -519,15 +524,12 @@ impl<'a> InnerStmtHandler<'a> {
     }
 
     // one act handle interface
-    pub fn act_handle(&mut self, act: &ExecAction) -> Result<()> {
+    pub fn act_handle(&mut self, act: &ExecAction) -> Result<bool> {
         match act {
             // handle func invocation
             ExecAction::Func(func_act) => match func_act {
                 FuncAction::Call(call_act) => self.func_invoc_handle(call_act),
                 // Unwind should not be handled in inner stmt handler
-                FuncAction::Unwind { loc: _ } => {
-                    bail!("Unwind action should not be handled in inner stmt handler")
-                }
                 _ => {
                     bail!("Unexpected Func action: {:?}", func_act);
                 }
@@ -535,18 +537,41 @@ impl<'a> InnerStmtHandler<'a> {
 
             ExecAction::Intra(jump_act) => match &jump_act.jump_variants {
                 JumpActionType::Br { val_loc } => {
-                    self.inner_cond_val_handle(val_loc, jump_act.cond_val)
+                    self.inner_cond_val_handle(val_loc, jump_act.cond_val)?;
+                    Ok(false)
                 }
-                JumpActionType::MergeBr => Ok(()),
+                JumpActionType::MergeBr => Ok(false),
                 jump_act_type => bail!(
                     "Stmt Action handle: Unexpected jump action type: {:?}",
                     jump_act_type
                 ),
             },
 
-            ExecAction::Select(sel_act) => self.inner_cond_val_handle(&sel_act.loc, sel_act.val),
+            ExecAction::Select(sel_act) => {
+                self.inner_cond_val_handle(&sel_act.loc, sel_act.val)?;
+                Ok(false)
+            }
 
-            ExecAction::UBV(ubv_hit) => self.inner_cond_val_handle(&ubv_hit.loc, ubv_hit.val),
+            ExecAction::UBV(ubv_hit) => {
+                self.inner_cond_val_handle(&ubv_hit.loc, ubv_hit.val)?;
+                Ok(false)
+            }
+
+            ExecAction::Rollback(rb_act) => {
+                match rb_act {
+                    RollbackAction::Longjmp(_) => Ok(false),
+                    RollbackAction::Setjmp(sj_act) => match &sj_act.sj_variants {
+                        // Post Long should be process at rollback exit, not repeated here
+                        SJVariant::PostLong => {
+                            bail!("Stmt Action handle: Post Longjmp should be consumed at rollback exit")
+                        }
+                        SJVariant::PreLong => Ok(false),
+                    },
+                    RollbackAction::Unwind(_) => {
+                        bail!("Stmt Action handle: Unwind action should not appear in inner statement handling")
+                    }
+                }
+            }
 
             _ => {
                 bail!("Stmt Action handle: Unexpected actions")

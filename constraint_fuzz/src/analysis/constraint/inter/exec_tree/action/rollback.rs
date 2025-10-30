@@ -77,7 +77,7 @@ impl SJVariant {
 
 #[derive(Clone, Debug)]
 pub struct SetjmpAction {
-    sj_variants: SJVariant,
+    pub sj_variants: SJVariant,
     pub func_name: String,
     pub stk_size: usize,
     pub invoc_loc: SrcLocEnum,

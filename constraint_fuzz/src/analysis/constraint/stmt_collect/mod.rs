@@ -7,7 +7,7 @@ use crate::{
     analysis::constraint::{
         inter::{
             exec_tree::{
-                action::{ExecAction, FuncAction, LoopAction, RecurLockAct},
+                action::{ExecAction, FuncAction, LoopAction},
                 thread_tree::{ExecFuncNode, FuncActIter, SharedFuncNodePtr},
                 ExecForest,
             },
@@ -36,6 +36,7 @@ use reqwest::header::IF_NONE_MATCH;
 
 mod inner_stmt;
 mod loop_handle;
+mod rollback;
 mod switch_handle;
 
 pub type StmtStr = String;
@@ -94,6 +95,12 @@ pub struct ProcessUnit {
     pub variants: ProcessUnitVariant,
 }
 
+impl std::fmt::Display for ProcessUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.content)
+    }
+}
+
 impl ProcessUnit {
     /**
      * Construction Related
@@ -143,7 +150,7 @@ impl ProcessUnit {
     }
 
     pub fn create_ret_assign_pu(
-        ret_expr: &str,
+        ret_expr: &ProcessUnit,
         ret_var: &SrcVar,
         ret_stmt_ptr: SharedStmtNodePtr,
     ) -> Self {
@@ -216,16 +223,18 @@ impl<'a> StmtCollector<'a> {
         })
     }
 
+    /// Return: whether to enter rollback status after current handle
     fn plain_stmt_handle(
         &self,
         plain_stmt: &PlainStmtNode,
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<()> {
+    ) -> Result<(Option<ProcessUnit>, bool)> {
         let mut handler = InnerStmtHandler::from_stmt_ptr(stmt_ptr.clone(), self)?;
+        let mut uw_detect = false;
         loop {
-            let act_op = act_iter.next();
+            let act_op = act_iter.get_cur();
             let act = match act_op {
                 None => break,
                 Some(act) => act,
@@ -234,23 +243,41 @@ impl<'a> StmtCollector<'a> {
             if !plain_stmt.act_inner(act)? {
                 break;
             }
-            handler.act_handle(act)?;
+            // actions that match
+            if act.is_longjmp() {
+                uw_detect = true;
+            }
+            let is_rb = handler.act_handle(act)?;
+            if is_rb {
+                uw_detect = true;
+                break; // break earlier
+            }
+            act_iter.update();
         }
-        handler.update_pu(pu_vec)?;
-        Ok(())
+        if plain_stmt.is_return_stmt() {
+            let ret_expr = handler.get_finalpu_while_update(pu_vec)?;
+            Ok((Some(ret_expr), uw_detect))
+        } else {
+            handler.update_pu(pu_vec)?;
+            Ok((None, uw_detect))
+        }
     }
 
+    /**
+     * Handle segments in header of control flow structures like for-init, for-update
+     */
     fn cfseg_handle(
         &self,
         cfseg: &SrcExpr,
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &'a mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let mut handler = InnerStmtHandler::new(cfseg.get_loc(), stmt_ptr.clone(), self)?;
+        let mut uw_detect = false;
 
         loop {
-            let act_op = act_iter.next();
+            let act_op = act_iter.get_cur();
             let act = match act_op {
                 None => break,
                 Some(act) => act,
@@ -259,22 +286,28 @@ impl<'a> StmtCollector<'a> {
             if !cfseg.act_inner(act)? {
                 break;
             }
-            handler.act_handle(act)?;
+            let is_rb = handler.act_handle(act)?;
+            if is_rb {
+                uw_detect = true;
+                break; // break earlier
+            }
+            act_iter.update();
         }
         handler.update_pu(pu_vec)?;
-        Ok(())
+        Ok(uw_detect)
     }
 
+    // Return trailing bool: if enters rollback status
     fn cond_expr_handle(
         &self,
         cond_expr: &SrcExpr,
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &'a mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<&'a ExecAction> {
+    ) -> Result<(Option<&'a ExecAction>, bool)> {
         let mut handler = InnerStmtHandler::new(cond_expr.get_loc(), stmt_ptr.clone(), self)?;
-        let outer_act = loop {
-            let act_op = act_iter.next();
+        let (outact_op, is_rb) = loop {
+            let act_op = act_iter.get_cur();
             // all acts here should be either inner act or outer act.
             let act = match act_op {
                 None => bail!(
@@ -284,17 +317,22 @@ impl<'a> StmtCollector<'a> {
             };
             let (is_inner, is_outer) = cond_expr.cond_expr_act_match(act)?;
             if !is_inner {
-                break act;
+                break (Some(act), false);
             }
-            handler.act_handle(act)?;
+            let is_rb = handler.act_handle(act)?;
+            if is_rb {
+                break (None, true);
+            }
             if is_outer {
-                break act;
+                break (Some(act), false);
             }
+
+            act_iter.update();
         };
         // NOTE: here act_idx should lies in the one after outer_act.
         handler.update_pu(pu_vec)?;
 
-        Ok(outer_act)
+        Ok((outact_op, is_rb))
     }
 
     fn if_struct_handle(
@@ -303,23 +341,30 @@ impl<'a> StmtCollector<'a> {
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<Option<SharedStmtNodePtr>> {
+    ) -> Result<(Option<SharedStmtNodePtr>, bool)> {
         let cond_expr = if_node.get_cond_expr();
 
         // inner expression handle
-        let outer_act = self.cond_expr_handle(cond_expr, stmt_ptr.clone(), act_iter, pu_vec)?;
+        let (outer_act_op, is_rb) =
+            self.cond_expr_handle(cond_expr, stmt_ptr.clone(), act_iter, pu_vec)?;
+        if is_rb {
+            return Ok((None, true));
+        }
+        let outer_act = outer_act_op.ok_or_else(|| {
+            eyre::eyre!("If Struct Handle: should have outer action after cond expr")
+        })?;
 
         // current action would be always an outer action
         let body_ptr_op = if_node.get_dest_body(outer_act)?;
         // NOTE: None determines end of the Func Src Tree
         let next_ptr_op = match body_ptr_op {
             Some(ptr) => Some(ptr),
-            None => FuncSrcTreeIter::get_after_next_ptr(stmt_ptr.clone())?,
+            None => FuncSrcTreeIter::get_afternext_ptr(stmt_ptr.clone())?,
         };
-        Ok(next_ptr_op)
+        Ok((next_ptr_op, false))
     }
 
-    fn check_recur_lock(func_node: &ExecFuncNode) -> Result<bool> {
+    fn check_recur_lock(func_node: &ExecFuncNode) -> Result<(bool, bool)> {
         let mut act_iter = func_node.iter();
 
         // let mut act_idx: usize = 0;
@@ -328,30 +373,38 @@ impl<'a> StmtCollector<'a> {
         let first_act = act_iter
             .next()
             .ok_or_else(|| eyre::eyre!("Function node should have at least one action"))?;
-        if let ExecAction::Recur(RecurLockAct::Locked) = first_act {
+        if first_act.is_recur_lock() {
             let second_act = act_iter.next().ok_or_else(|| {
                 eyre::eyre!(
                     "Function node should have at least two actions when first is Recur Locked"
                 )
             })?;
             assert!(
-                matches!(second_act, ExecAction::Recur(RecurLockAct::Released)),
+                second_act.is_recur_release(),
                 "Second Action should be Recur Released action"
             );
-            Ok(true)
+
+            // check third action
+            let third_act = act_iter.next().ok_or_else(|| {
+                eyre::eyre!("Recur Locked function node should has at least 3 actions")
+            })?;
+
+            Ok((true, third_act.is_unwind()))
         } else {
-            Ok(false)
+            Ok((false, false))
         }
     }
 
+    /// Return : trailing bool means whether to enter rollback status after current function handle
     fn collect_intra(
         &self,
         src_tree: &FuncSrcTree,
         exec_node_ptr: SharedFuncNodePtr,
-    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>)> {
+    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>, bool)> {
         let func_node = exec_node_ptr.borrow();
-        if Self::check_recur_lock(&func_node)? {
-            return Ok((vec![], None));
+        let (is_recur_lock, enter_rb) = Self::check_recur_lock(&func_node)?;
+        if is_recur_lock {
+            return Ok((vec![], None, enter_rb));
         }
 
         let mut act_iter = func_node.iter();
@@ -372,7 +425,8 @@ impl<'a> StmtCollector<'a> {
             match &stmt_node.variants {
                 StmtNodeVariants::Block(_) => continue,
                 StmtNodeVariants::CF(cf_struct) => {
-                    let next_ptr_op = match cf_struct {
+                    let (next_ptr_op, is_rb) = match cf_struct {
+                        // TODO: modify return value of if interface and switch interface
                         CFNode::If(if_node) => self.if_struct_handle(
                             if_node,
                             stmt_ptr.clone(),
@@ -398,41 +452,59 @@ impl<'a> StmtCollector<'a> {
                             &mut pu_vec,
                         )?,
                     };
-
-                    src_iter.update_in_cf(next_ptr_op);
+                    if is_rb {
+                        // rollback inner
+                        let is_inner = Self::rollback_detect(&mut act_iter)?;
+                        if is_inner {
+                            return Ok((pu_vec, None, true));
+                        } else {
+                            Self::rollback_exit_handle(src_tree, &mut act_iter, &mut src_iter)?;
+                        }
+                    } else {
+                        src_iter.update(next_ptr_op);
+                    }
                 }
                 StmtNodeVariants::Plain(plain_stmt) => {
                     // handle function imigrate and plain string collection.
 
                     // handle return stmt
-                    let ret_expr_op = plain_stmt.get_return_expr()?;
-                    if let Some(ret_expr) = ret_expr_op {
-                        let ret_var_op = Self::create_ret_var(src_tree, plain_stmt.loc.clone());
-                        match ret_var_op {
-                            None => {}
-                            Some(ref ret_var) => {
-                                let ret_assign_pu = ProcessUnit::create_ret_assign_pu(
-                                    &ret_expr,
-                                    &ret_var,
-                                    stmt_ptr.clone(),
-                                );
-                                pu_vec.push(ret_assign_pu);
-                            }
-                        }
-                        return Ok((pu_vec, ret_var_op));
-                    }
 
-                    self.plain_stmt_handle(
+                    let (retexpr_op, is_rb) = self.plain_stmt_handle(
                         plain_stmt,
                         stmt_ptr.clone(),
                         &mut act_iter,
                         &mut pu_vec,
                     )?;
+                    if is_rb {
+                        let is_inner = Self::rollback_detect(&mut act_iter)?;
+                        if is_inner {
+                            return Ok((pu_vec, None, true));
+                        } else {
+                            // rollback exit handle
+                            Self::rollback_exit_handle(src_tree, &mut act_iter, &mut src_iter)?;
+                        }
+                    } else {
+                        if let Some(ret_expr) = retexpr_op {
+                            let ret_var_op = Self::create_ret_var(src_tree, plain_stmt.loc.clone());
+                            match ret_var_op {
+                                None => {}
+                                Some(ref ret_var) => {
+                                    let ret_assign_pu = ProcessUnit::create_ret_assign_pu(
+                                        &ret_expr,
+                                        &ret_var,
+                                        stmt_ptr.clone(),
+                                    );
+                                    pu_vec.push(ret_assign_pu);
+                                }
+                            }
+                            return Ok((pu_vec, ret_var_op, false));
+                        }
+                    }
                 }
             }
         }
 
-        Ok((pu_vec, None))
+        Ok((pu_vec, None, false))
     }
 
     fn get_src_func_tree(&self, func_name: &str) -> Result<&FuncSrcTree> {
@@ -473,7 +545,11 @@ impl<'a> StmtCollector<'a> {
         let src_tree = self.get_src_func_tree(func_name)?;
         drop(func_node);
 
-        let (pu_vec, _) = self.collect_intra(src_tree, func_node_ptr)?;
+        let (pu_vec, _, is_rb) = self.collect_intra(src_tree, func_node_ptr)?;
+        assert!(
+            !is_rb,
+            "Top Level Function should not enter rollback status after intra collection"
+        );
         Ok(pu_vec)
     }
 

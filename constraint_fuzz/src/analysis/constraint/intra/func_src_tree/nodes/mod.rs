@@ -14,7 +14,10 @@ use my_macros::EquivByLoc;
 use crate::analysis::constraint::{
     inter::{
         exec_tree::{
-            action::{ExecAction, FuncAction, JumpAction, JumpActionType, LoopAction},
+            action::{
+                rollback::SetjmpAction, ExecAction, FuncAction, JumpAction, JumpActionType,
+                LoopAction,
+            },
             thread_tree::ExecFuncNode,
         },
         loc::SrcLocEnum,
@@ -28,8 +31,8 @@ use crate::analysis::constraint::{
         },
         nodes::cf_nodes::{CFNode, CasePtrMap, SwitchArm, SwitchNode},
         stmts::{
-            BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, LabelDict, QLLoc, StmtType,
-            SwitchStmt, WhileStmt,
+            BlockStmt, BlockType, ChildEntry, ForStmt, IfStmt, LabelDict, QLLoc, SetjmpDict,
+            StmtType, SwitchStmt, WhileStmt,
         },
     },
     stmt_collect::ProcessUnit,
@@ -333,19 +336,23 @@ impl PlainStmtNode {
         }
     }
 
-    pub fn get_return_expr(&self) -> Result<Option<String>> {
-        match self.stmt_type {
-            StmtType::Return => {
-                let content = self.loc.get_content()?;
-                let start_idx = "return ".len();
-                // get rid of starting "return " and ending ";"
-                Ok(Some(
-                    content[start_idx..content.len() - 1].trim().to_string(),
-                ))
-            }
-            _ => Ok(None),
-        }
+    pub fn is_return_stmt(&self) -> bool {
+        matches!(self.stmt_type, StmtType::Return)
     }
+
+    // pub fn get_return_expr(&self) -> Result<Option<String>> {
+    //     match self.stmt_type {
+    //         StmtType::Return => {
+    //             let content = self.loc.get_content()?;
+    //             let start_idx = "return ".len();
+    //             // get rid of starting "return " and ending ";"
+    //             Ok(Some(
+    //                 content[start_idx..content.len() - 1].trim().to_string(),
+    //             ))
+    //         }
+    //         _ => Ok(None),
+    //     }
+    // }
 
     fn src_loc_inner(&self, src_loc: &SrcLocEnum) -> bool {
         match self.loc.compare_src_loc(src_loc) {
@@ -449,9 +456,19 @@ pub struct FuncSrcTree {
     pub ret_type: VarType,
     pub func_name: String,
     label_dict: LabelDict,
+    setjmp_dict: SetjmpDict,
 }
 
 impl FuncSrcTree {
+    pub fn get_nextptr_by_rbexit(&self, postsj_act: &SetjmpAction) -> Result<SharedStmtNodePtr> {
+        let next_ptr = self.setjmp_dict.get_by_postsj(postsj_act).ok_or_else(
+            || eyre::eyre!(
+            "Func Src Tree: Could not find statement pointer based on setjmp action's invocation location"
+            )
+        )?;
+        Ok(next_ptr.clone())
+    }
+
     pub fn get_formal_param_vec(&self) -> &Vec<SrcVar> {
         &self.valid_var_vec
     }
@@ -461,6 +478,7 @@ impl FuncSrcTree {
         func_scope_map: &FuncScopeMap,
         ret_type: VarType,
         label_dict: LabelDict,
+        setjmp_dict: SetjmpDict,
     ) -> Self {
         let valid_var_vec = match func_scope_map.get(name) {
             None => vec![],
@@ -472,6 +490,7 @@ impl FuncSrcTree {
             ret_type,
             func_name: name.to_string(),
             label_dict,
+            setjmp_dict,
         }
     }
 
@@ -563,7 +582,7 @@ impl<'a> FuncSrcTreeIter<'a> {
         }
     }
 
-    pub fn get_after_next_ptr(cur_ptr: SharedStmtNodePtr) -> Result<Option<SharedStmtNodePtr>> {
+    pub fn get_afternext_ptr(cur_ptr: SharedStmtNodePtr) -> Result<Option<SharedStmtNodePtr>> {
         let mut cur_ptr = cur_ptr;
         // let mut par_ptr;
         loop {
@@ -600,11 +619,11 @@ impl<'a> FuncSrcTreeIter<'a> {
             StmtNodeVariants::CF(_) => {
                 bail!("Should not call get_next_ptr on CFStruct node directly")
             }
-            StmtNodeVariants::Plain(_) => Self::get_after_next_ptr(cur_ptr.clone()),
+            StmtNodeVariants::Plain(_) => Self::get_afternext_ptr(cur_ptr.clone()),
         }
     }
 
-    pub fn update_in_cf(&mut self, next_ptr_op: Option<SharedStmtNodePtr>) {
+    pub fn update(&mut self, next_ptr_op: Option<SharedStmtNodePtr>) {
         self.cur_ptr_op = next_ptr_op;
     }
 
@@ -656,7 +675,7 @@ impl<'a> FuncSrcTreeIter<'a> {
         let lab_ptr = self.tree.label_dict.get(&lab_name).ok_or_else(||{
             eyre::eyre!("Func Src Iter, goto handle: Could not find corresponding label stmt pointer based on label name {}", lab_name)
         })?;
-        let next_ptr = match Self::get_after_next_ptr(lab_ptr.clone())? {
+        let next_ptr = match Self::get_afternext_ptr(lab_ptr.clone())? {
             Some(p) => p,
             None => bail!(
                 "Func Src Iter, goto handle: Could not find next pointer after label statement"
@@ -676,7 +695,7 @@ impl<'a> FuncSrcTreeIter<'a> {
                     StmtType::Continue => Some(self.get_parent_loopptr()?),
                     StmtType::Break => {
                         let loop_ptr = self.get_parent_loopptr()?;
-                        Self::get_after_next_ptr(loop_ptr)?
+                        Self::get_afternext_ptr(loop_ptr)?
                     }
                     StmtType::Goto => Some(self.get_goto_next_ptr(plain_node)?),
                     stmt_var => bail!(

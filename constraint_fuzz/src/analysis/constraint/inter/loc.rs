@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ValidSrcLoc {
     pub file_path: PathBuf,
     pub line: usize,
@@ -51,6 +51,13 @@ impl fmt::Debug for SrcLocEnum {
 }
 
 impl SrcLocEnum {
+    pub fn get_validloc(&self) -> Option<&ValidSrcLoc> {
+        match self {
+            SrcLocEnum::NullLoc => None,
+            SrcLocEnum::Valid(valid_loc) => Some(valid_loc),
+        }
+    }
+
     pub fn get_src_path(&self) -> Option<&Path> {
         match self {
             SrcLocEnum::NullLoc => None,

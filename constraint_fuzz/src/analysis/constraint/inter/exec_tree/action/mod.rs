@@ -7,7 +7,10 @@ use color_eyre::eyre::bail;
 use crate::analysis::constraint::inter::{
     error::ActrecParseError,
     exec_tree::{
-        action::lock::{LockAction, LoopLockAct, RecurLockAct},
+        action::{
+            lock::{LockAction, LoopLockAct, RecurLockAct},
+            rollback::{SJVariant, SetjmpAction, UnwindAction},
+        },
         thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
     },
     loc::SrcLocEnum,
@@ -44,7 +47,6 @@ pub struct FuncCallAction {
 pub enum FuncAction {
     Call(FuncCallAction),
     Return { func_name: String },
-    Unwind { loc: SrcLocEnum },
 }
 
 impl FuncAction {
@@ -83,7 +85,6 @@ impl FuncAction {
         match &self {
             FuncAction::Call(_) => format!("Function_Call_Action_{}", cnt),
             FuncAction::Return { func_name: _ } => format!("Function_Return_Action_{}", cnt),
-            FuncAction::Unwind { loc: _ } => format!("Function_Unwind_Action_{}", cnt),
         }
     }
 }
@@ -101,7 +102,6 @@ impl fmt::Debug for FuncAction {
                 )
             }
             FuncAction::Return { func_name } => write!(f, "Return({})", func_name),
-            FuncAction::Unwind { loc } => write!(f, "Unwind({:?})", loc),
         }
     }
 }
@@ -111,7 +111,6 @@ impl FuncAction {
         match self {
             FuncAction::Call(call_act) => &call_act.func_name,
             // actually operation name
-            FuncAction::Unwind { loc: _ } => "Unwind",
             FuncAction::Return { func_name } => func_name,
         }
     }
@@ -137,21 +136,6 @@ impl FuncAction {
         Ok(Self::Return {
             func_name: func_name.to_owned(),
         })
-    }
-
-    pub fn parse_unwind_guard(line: &str) -> Result<Self> {
-        if !line.starts_with(FuncAction::UNWIND_PREFIX) {
-            bail!("Line does not start with unwind prefix: {}", line);
-        }
-
-        let invoc_part = &line[FuncAction::UNWIND_PREFIX.len() + 1..];
-        let loc_end_pos = invoc_part
-            .find(char::is_whitespace)
-            .ok_or_else(|| eyre::eyre!("No whitespace found in unwind part: {}", invoc_part))?;
-        let loc_str = &invoc_part[..loc_end_pos];
-        let loc = SrcLocEnum::from_str(loc_str)?;
-
-        Ok(Self::Unwind { loc })
     }
 
     /// return invoc_loc extracted and number of characters consumed(including the trailing space)
@@ -748,6 +732,96 @@ pub enum ExecAction {
 }
 
 impl ExecAction {
+    pub fn derive_postsj_act(&self) -> Option<&SetjmpAction> {
+        match self {
+            Self::Rollback(rb_act) => match rb_act {
+                RollbackAction::Setjmp(sj_act) => match sj_act.sj_variants {
+                    SJVariant::PostLong => Some(sj_act),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn is_loop_lock(&self) -> bool {
+        match self {
+            Self::Lock(lock_act) => match lock_act {
+                LockAction::Loop(LoopLockAct::Locked) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_loop_release(&self) -> bool {
+        match self {
+            Self::Lock(lock_act) => match lock_act {
+                LockAction::Loop(LoopLockAct::Released) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_unwind(&self) -> bool {
+        match self {
+            Self::Rollback(RollbackAction::Unwind(_)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_postsj(&self) -> bool {
+        match self {
+            Self::Rollback(rb_act) => match rb_act {
+                RollbackAction::Setjmp(sj_act) => match sj_act.sj_variants {
+                    SJVariant::PostLong => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_longjmp(&self) -> bool {
+        match self {
+            ExecAction::Rollback(RollbackAction::Longjmp(_)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_recur_lock(&self) -> bool {
+        match self {
+            ExecAction::Lock(lock_act) => match lock_act {
+                LockAction::Recur(RecurLockAct::Locked) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_recur_release(&self) -> bool {
+        match self {
+            ExecAction::Lock(lock_act) => match lock_act {
+                LockAction::Recur(RecurLockAct::Released) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn get_unwind_act(&self) -> Option<&UnwindAction> {
+        match self {
+            Self::Rollback(rb_act) => match rb_act {
+                RollbackAction::Unwind(uw_act) => Some(uw_act),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn get_switch_act(&self) -> Option<&JumpAction> {
         match self {
             ExecAction::Intra(jump_act) => match jump_act.jump_variants {
@@ -830,7 +904,6 @@ impl ExecAction {
             ExecAction::Func(func_act) => match &func_act {
                 FuncAction::Call(call_act) => call_act.invoc_loc_op.as_ref(),
                 FuncAction::Return { .. } => None,
-                FuncAction::Unwind { loc } => Some(loc),
             },
             ExecAction::Intra(intra_act) => Some(&intra_act.from_loc),
             ExecAction::Loop(loop_act) => Some(&loop_act.header_loc),
@@ -847,7 +920,6 @@ impl ExecAction {
             ExecAction::Func(func_act) => match func_act {
                 FuncAction::Call(_) => true,
                 FuncAction::Return { .. } => false,
-                FuncAction::Unwind { .. } => false,
             },
             ExecAction::Intra(jump_act) => match jump_act.jump_variants {
                 JumpActionType::Br { .. } => true,

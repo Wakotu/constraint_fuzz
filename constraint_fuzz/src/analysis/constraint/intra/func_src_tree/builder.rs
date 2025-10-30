@@ -15,7 +15,7 @@ use crate::analysis::constraint::{
             CodeQLRunner, FuncTable,
         },
         nodes::{FuncSrcTree, SharedStmtNodePtr, StmtNode},
-        stmts::{ChildEntry, LabelDict, StmtType},
+        stmts::{ChildEntry, LabelDict, SetjmpDict, StmtType},
     },
 };
 use color_eyre::eyre::Result;
@@ -113,6 +113,7 @@ impl<'a> SrcForestBuilder<'a> {
             stmt_scope_map: &self.proj_info.stmt_scope_map,
             func_scope_map: &self.proj_info.func_scope_map,
             label_dict: LabelDict::new(),
+            setjmp_dict: SetjmpDict::new(),
         })
     }
 
@@ -160,6 +161,7 @@ pub struct SrcTreeBuilder<'a> {
 
     // middle state
     label_dict: LabelDict,
+    setjmp_dict: SetjmpDict,
 }
 
 impl<'a> SrcTreeBuilder<'a> {
@@ -192,6 +194,7 @@ impl<'a> SrcTreeBuilder<'a> {
             self.func_scope_map,
             self.func_info.ret_type.clone(),
             self.label_dict,
+            self.setjmp_dict,
         )))
     }
 
@@ -413,6 +416,9 @@ impl<'a> SrcTreeBuilder<'a> {
 
         if let Some(labname) = labname_op {
             self.label_dict.insert(labname, plain_ptr.clone())?;
+        }
+        if let Some(sj_loc) = cur_entry.get_setjmp_loc()? {
+            self.setjmp_dict.insert(&sj_loc, plain_ptr.clone())?;
         }
         Ok(Some(plain_ptr))
     }

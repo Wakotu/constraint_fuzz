@@ -20,9 +20,10 @@ impl<'a> StmtCollector<'a> {
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<ProcessUnit> {
+    ) -> Result<(ProcessUnit, bool)> {
         let switch_expr = switch_node.get_expr();
         let mut handler = InnerStmtHandler::new(switch_expr.get_loc(), stmt_ptr.clone(), self)?;
+        let mut uw_detect = false;
 
         loop {
             let act_op = act_iter.next();
@@ -34,10 +35,14 @@ impl<'a> StmtCollector<'a> {
             if !switch_expr.act_inner(act)? {
                 break;
             }
-            handler.act_handle(act)?;
+            let is_rb = handler.act_handle(act)?;
+            if is_rb {
+                uw_detect = true;
+                break;
+            }
         }
         let final_pu = handler.get_finalpu_while_update(pu_vec)?;
-        Ok(final_pu)
+        Ok((final_pu, uw_detect))
     }
 
     // Returns loc of dest case
@@ -67,12 +72,16 @@ impl<'a> StmtCollector<'a> {
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<Option<SharedStmtNodePtr>> {
-        let expr_pu = self.switch_expr_handle(switch_node, stmt_ptr.clone(), act_iter, pu_vec)?;
+    ) -> Result<(Option<SharedStmtNodePtr>, bool)> {
+        let (expr_pu, is_rb) =
+            self.switch_expr_handle(switch_node, stmt_ptr.clone(), act_iter, pu_vec)?;
+        if is_rb {
+            return Ok((None, true));
+        }
         let arm = self.get_dest_arm(switch_node, act_iter)?;
 
         let cond_pu = arm.derive_cond_pu(expr_pu)?;
         pu_vec.push(cond_pu);
-        Ok(arm.get_first_body_ptr())
+        Ok((arm.get_first_body_ptr(), false))
     }
 }
