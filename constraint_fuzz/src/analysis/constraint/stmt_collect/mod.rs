@@ -34,10 +34,13 @@ use color_eyre::eyre::Result;
 use eyre::bail;
 use reqwest::header::IF_NONE_MATCH;
 
+// inner implementation modules
 mod inner_stmt;
 mod loop_handle;
 mod rollback;
 mod switch_handle;
+
+pub mod runtime_path;
 
 pub type StmtStr = String;
 
@@ -194,17 +197,17 @@ impl<'a> StmtCollector<'a> {
     }
 
     fn is_inside_loop(stmt_ptr: SharedStmtNodePtr) -> bool {
-        let mut cur_ptr_op = stmt_ptr.borrow().get_parent_ptr();
+        let mut cur_ptr_op = stmt_ptr.read().unwrap().get_parent_ptr();
         loop {
             let cur_ptr = match cur_ptr_op {
                 Some(ptr) => ptr,
                 None => return false,
             };
-            if cur_ptr.borrow().is_loop_node() {
+            if cur_ptr.read().unwrap().is_loop_node() {
                 return true;
             }
 
-            cur_ptr_op = cur_ptr.borrow().get_parent_ptr();
+            cur_ptr_op = cur_ptr.read().unwrap().get_parent_ptr();
         }
     }
 
@@ -401,7 +404,7 @@ impl<'a> StmtCollector<'a> {
         src_tree: &FuncSrcTree,
         exec_node_ptr: SharedFuncNodePtr,
     ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>, bool)> {
-        let func_node = exec_node_ptr.borrow();
+        let func_node = exec_node_ptr.read().unwrap();
         let (is_recur_lock, enter_rb) = Self::check_recur_lock(&func_node)?;
         if is_recur_lock {
             return Ok((vec![], None, enter_rb));
@@ -420,7 +423,7 @@ impl<'a> StmtCollector<'a> {
                 Some(ptr) => ptr,
                 None => break,
             };
-            let stmt_node = stmt_ptr.borrow();
+            let stmt_node = stmt_ptr.read().unwrap();
 
             match &stmt_node.variants {
                 StmtNodeVariants::Block(_) => continue,
@@ -518,7 +521,7 @@ impl<'a> StmtCollector<'a> {
     }
 
     fn collect_recur(&self, func_node_ptr: SharedFuncNodePtr) -> Result<Vec<ProcessUnit>> {
-        let func_node = func_node_ptr.borrow();
+        let func_node = func_node_ptr.read().unwrap();
         if func_node.is_init() {
             assert!(
                 func_node.data.len() == 1,

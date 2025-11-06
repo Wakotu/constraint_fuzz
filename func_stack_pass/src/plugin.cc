@@ -1114,7 +1114,9 @@ bool instru_for_thread_creation(Module &M, ModuleAnalysisManager &MAM) {
         std::string loc = ss.str();
 
         // create instrumentation IR builder
-        InstrumentationIRBuilder irb(I->getNextNonDebugInstruction());
+        // InstrumentationIRBuilder irb(I->getNextNonDebugInstruction());
+        // adjust instrumentation location to pre-pthread call
+        InstrumentationIRBuilder irb(I);
         auto loc_str = irb.CreateGlobalStringPtr(loc.c_str());
         auto thread_guard_func_cl = get_thread_rec_func_decl(M);
         auto inst = irb.CreateCall(thread_guard_func_cl, {loc_str, tid_ptr});

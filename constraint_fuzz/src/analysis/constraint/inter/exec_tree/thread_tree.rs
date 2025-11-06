@@ -7,13 +7,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::iter::Iterator;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::{
-    cell::RefCell,
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
-    rc::{Rc, Weak},
 };
 use tokio::join;
 
@@ -39,8 +37,8 @@ pub trait FuncIter {
     fn iter_sub_funcs(&self) -> SubFuncIter;
 }
 
-pub type SharedFuncNodePtr = Rc<RefCell<ExecFuncNode>>;
-pub type WeakFuncNodePtr = Weak<RefCell<ExecFuncNode>>;
+pub type SharedFuncNodePtr = Arc<RwLock<ExecFuncNode>>;
+pub type WeakFuncNodePtr = Weak<RwLock<ExecFuncNode>>;
 
 const NODE_DELIM: &str = ", ";
 
@@ -94,14 +92,14 @@ impl Iterator for SubFuncIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let prev_idx = if let Some(cur_ptr) = &self.cur_func_ptr {
-            let cur_func = cur_ptr.borrow();
+            let cur_func = cur_ptr.read().unwrap();
             cur_func
                 .get_parent_idx()
                 .expect("Current function pointer should have a parent index") as i64
         } else {
             -1
         };
-        let parent_func = self.parent_func_ptr.borrow();
+        let parent_func = self.parent_func_ptr.read().unwrap();
         for act in parent_func.iter_acts_at((prev_idx + 1) as usize) {
             if let ExecAction::Func(func_act) = act {
                 // get child pointer
@@ -290,7 +288,7 @@ impl ExecFuncNode {
 
     /// Should only be used during construction of ExecTree
     pub fn get_node_ptr(self) -> SharedFuncNodePtr {
-        Rc::new(RefCell::new(self))
+        Arc::new(RwLock::new(self))
     }
 
     pub fn get_parent_ptr(&self) -> Option<SharedFuncNodePtr> {
@@ -513,7 +511,7 @@ impl ExecThreadTree {
         {
             // construct a thcp entry
             let func_node_ptr = self.cur_node_ptr.clone();
-            let act_idx = func_node_ptr.borrow().get_len();
+            let act_idx = func_node_ptr.read().unwrap().get_len();
             let tid = thread_act.get_thread_id();
             let thcp_entry = (tid, ActionPoint::new(func_node_ptr, act_idx));
 
@@ -549,7 +547,7 @@ impl ExecThreadTree {
 
     //// add record to current entry
     fn add_act(&mut self, act: &ExecAction) -> Result<()> {
-        let mut cur_node = self.cur_node_ptr.borrow_mut();
+        let mut cur_node = self.cur_node_ptr.write().unwrap();
         cur_node.push(act.to_owned());
 
         Ok(())
@@ -566,13 +564,13 @@ impl ExecThreadTree {
         /* get context information for newly created function node */
         // get index of Function Action which corresponds to new function node.
         let cur_act_len = {
-            let cur_func = self.cur_node_ptr.borrow();
+            let cur_func = self.cur_node_ptr.read().unwrap();
             cur_func.get_len()
         };
         // create node and act_type
         let child_ptr = ExecFuncNode::regular_node(
             func_name.to_owned(),
-            Rc::downgrade(&self.cur_node_ptr),
+            Arc::downgrade(&self.cur_node_ptr),
             cur_act_len,
         )
         .get_node_ptr();
@@ -592,16 +590,21 @@ impl ExecThreadTree {
 
     fn node_return(&mut self, func_name: &str) -> Result<()> {
         {
-            let cur_node = self.cur_node_ptr.borrow();
+            let cur_node = self.cur_node_ptr.read().unwrap();
             let cur_func_name = cur_node.get_func_name_or_init();
             assert!(
                                 cur_func_name == func_name
                                     , "Current function name ({}) does not match return action function name ({}). Tree might be corrupted.", cur_func_name, func_name);
         };
         // move up in the tree
-        let parent_ptr = self.cur_node_ptr.borrow().get_parent_ptr().ok_or_else(|| {
-            eyre::eyre!("Current node has no parent, cannot return: {}", func_name)
-        })?;
+        let parent_ptr = self
+            .cur_node_ptr
+            .read()
+            .unwrap()
+            .get_parent_ptr()
+            .ok_or_else(|| {
+                eyre::eyre!("Current node has no parent, cannot return: {}", func_name)
+            })?;
         self.cur_node_ptr = parent_ptr;
         if self.cur_depth > 0 {
             self.cur_depth -= 1;
@@ -710,7 +713,7 @@ impl ExecThreadTree {
 
 impl fmt::Debug for ExecThreadTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let root = self.root_ptr.borrow();
+        let root = self.root_ptr.read().unwrap();
         writeln!(f, "ExecTree:")?;
         write!(f, "{:?}", root)?;
         Ok(())

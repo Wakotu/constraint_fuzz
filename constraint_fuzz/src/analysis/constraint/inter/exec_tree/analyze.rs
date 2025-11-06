@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
@@ -41,7 +42,7 @@ impl Iterator for ThreadTreeIter {
             return None;
         }
         let cur_node_ptr = self.queue.remove(0);
-        let cur_node = cur_node_ptr.borrow();
+        let cur_node = cur_node_ptr.read().unwrap();
         // add children to the queue
         for act in cur_node.iter_acts() {
             if let Some(func_act) = act.get_func_call_act() {
@@ -175,7 +176,7 @@ impl ExecThreadTree {
         cur_func_ptr: SharedFuncNodePtr,
         digraph: &mut dot_writer::Scope<'d, 'w>,
     ) -> Result<String> {
-        let cur_func = cur_func_ptr.borrow();
+        let cur_func = cur_func_ptr.read().unwrap();
         let cur_func_id = cur_func.get_dot_id();
         let act_id_list = cur_func
             .iter_acts()
@@ -255,7 +256,7 @@ impl ExecThreadTree {
         cur_func_ptr: SharedFuncNodePtr,
         digraph: &mut dot_writer::Scope<'d, 'w>,
     ) -> Result<String> {
-        let cur_func = cur_func_ptr.borrow();
+        let cur_func = cur_func_ptr.read().unwrap();
         let cur_func_id = cur_func.get_dot_id();
 
         // iterate all subfunctions
@@ -355,7 +356,7 @@ impl ExecThreadTree {
     pub fn collect_long_func_nodes(&self) -> Result<FuncNodeLenList> {
         let mut func_len_list = FuncNodeLenList::new();
         for node_ptr in self.func_node_bfs_iter() {
-            let node = node_ptr.borrow();
+            let node = node_ptr.read().unwrap();
             let len_entry = node.to_len_entry();
             func_len_list.push(len_entry)?;
         }
@@ -369,7 +370,10 @@ impl ExecThreadTree {
     }
 
     pub fn collect_recur_entries(&self) -> Result<RecurRes> {
-        log::debug!("Original root length: {}", self.root_ptr.borrow().get_len());
+        log::debug!(
+            "Original root length: {}",
+            self.root_ptr.read().unwrap().get_len()
+        );
         let recur_checker = ThreadTreeRecurChecker::new();
         recur_checker.check_recur(self.root_ptr.clone())
     }
@@ -399,7 +403,7 @@ impl ExecThreadTree {
         let mut func_call_count: HashMap<String, usize> = HashMap::new();
 
         for func_node_ptr in self.func_node_bfs_iter() {
-            let func_node = func_node_ptr.borrow();
+            let func_node = func_node_ptr.read().unwrap();
             let func_name = func_node.get_func_name_or_init();
             let count = func_call_count.entry(func_name.to_owned()).or_insert(0);
             *count += 1;
@@ -425,7 +429,7 @@ impl ExecThreadTree {
 
         let mut triage: usize = 0;
         for func_node_ptr in self.func_node_bfs_iter() {
-            let func_node = func_node_ptr.borrow();
+            let func_node = func_node_ptr.read().unwrap();
             if func_node.get_func_name_or_init() == most_called_entry.0 {
                 triage += 1;
                 if triage > ITER_TRY {
@@ -441,7 +445,7 @@ impl ExecThreadTree {
                         return Ok(()); // continue if no parent function found
                     }
                 };
-                let parent_func = parent_func_ptr.borrow();
+                let parent_func = parent_func_ptr.read().unwrap();
                 let parent_func_name = parent_func.get_func_name_or_init();
                 log::debug!(
                     "Function {} with length of {}, {} found, Parent Function: {}",
@@ -474,7 +478,7 @@ impl ExecThreadTree {
         let mut loop_header_count: HashMap<SrcLocEnum, usize> = HashMap::new();
 
         for func_node_ptr in self.func_node_bfs_iter() {
-            let func_node = func_node_ptr.borrow();
+            let func_node = func_node_ptr.read().unwrap();
             for act in func_node.iter_acts() {
                 if let ExecAction::Loop(loop_act) = act {
                     let header_name = loop_act.get_header_loc().to_owned();
@@ -505,7 +509,7 @@ impl ExecThreadTree {
         let mut func_child_count: HashMap<String, usize> = HashMap::new();
 
         for func_node_ptr in self.func_node_bfs_iter() {
-            let func_node = func_node_ptr.borrow();
+            let func_node = func_node_ptr.read().unwrap();
             let func_name = func_node.get_func_name_or_init();
             let sub_count = func_node_ptr.iter_sub_funcs().count();
             func_child_count
@@ -535,8 +539,8 @@ impl ExecThreadTree {
         log::debug!(
             "{}: {} -> {}",
             prompt,
-            child.borrow().get_func_name_or_init(),
-            parent.borrow().get_func_name_or_init()
+            child.read().unwrap().get_func_name_or_init(),
+            parent.read().unwrap().get_func_name_or_init()
         );
         Ok(())
     }
@@ -548,11 +552,11 @@ impl ExecThreadTree {
     ) -> Result<SharedFuncNodePtr> {
         log::info!(
             "Show common parent for functions: {} and {}",
-            func_ptr_a.borrow().get_func_name_or_init(),
-            func_ptr_b.borrow().get_func_name_or_init()
+            func_ptr_a.read().unwrap().get_func_name_or_init(),
+            func_ptr_b.read().unwrap().get_func_name_or_init()
         );
-        let mut parent_ptr_a_op = func_ptr_a.borrow().get_parent_ptr();
-        let mut parent_ptr_b_op = func_ptr_b.borrow().get_parent_ptr();
+        let mut parent_ptr_a_op = func_ptr_a.read().unwrap().get_parent_ptr();
+        let mut parent_ptr_b_op = func_ptr_b.read().unwrap().get_parent_ptr();
 
         let mut child_ptr_a = func_ptr_a.clone();
         let mut child_ptr_b = func_ptr_b.clone();
@@ -560,14 +564,14 @@ impl ExecThreadTree {
         while let (Some(ptr_a), Some(ptr_b)) = (parent_ptr_a_op, parent_ptr_b_op) {
             Self::show_child_to_parent(child_ptr_a.clone(), ptr_a.clone(), "Call Chain A")?;
             Self::show_child_to_parent(child_ptr_b.clone(), ptr_b.clone(), "Call Chain B")?;
-            if Rc::ptr_eq(&ptr_a, &ptr_b) {
+            if Arc::ptr_eq(&ptr_a, &ptr_b) {
                 return Ok(ptr_a);
             }
 
             child_ptr_a = ptr_a.clone();
             child_ptr_b = ptr_b.clone();
-            parent_ptr_a_op = ptr_a.borrow().get_parent_ptr();
-            parent_ptr_b_op = ptr_b.borrow().get_parent_ptr();
+            parent_ptr_a_op = ptr_a.read().unwrap().get_parent_ptr();
+            parent_ptr_b_op = ptr_b.read().unwrap().get_parent_ptr();
         }
 
         bail!("No common parent found for the given function pointers");
@@ -576,18 +580,18 @@ impl ExecThreadTree {
     fn show_chain_to_root(func_node_ptr: SharedFuncNodePtr) -> () {
         let mut cur_ptr = func_node_ptr;
         loop {
-            let parent_ptr_op = { cur_ptr.borrow().get_parent_ptr() };
+            let parent_ptr_op = { cur_ptr.read().unwrap().get_parent_ptr() };
             if let Some(parent_ptr) = parent_ptr_op {
                 log::debug!(
                     "{} -> {}",
-                    cur_ptr.borrow().get_func_name_or_init(),
-                    parent_ptr.borrow().get_func_name_or_init()
+                    cur_ptr.read().unwrap().get_func_name_or_init(),
+                    parent_ptr.read().unwrap().get_func_name_or_init()
                 );
                 cur_ptr = parent_ptr;
             } else {
                 log::debug!(
                     "Reached root function: {}",
-                    cur_ptr.borrow().get_func_name_or_init()
+                    cur_ptr.read().unwrap().get_func_name_or_init()
                 );
                 break;
             }
@@ -598,7 +602,7 @@ impl ExecThreadTree {
         // collect 2 function pointers with the same name
         let mut func_ptrs: Vec<SharedFuncNodePtr> = Vec::new();
         for func_node_ptr in self.func_node_bfs_iter() {
-            let func_node = func_node_ptr.borrow();
+            let func_node = func_node_ptr.read().unwrap();
             if func_node.get_func_name_or_init() == func_name {
                 func_ptrs.push(func_node_ptr.clone());
                 if func_ptrs.len() >= 2 {
@@ -619,9 +623,9 @@ impl ExecThreadTree {
                 Ok(common_parent_ptr) => {
                     log::info!(
                         "Common parent for functions {} and {}: {}",
-                        func_ptr_a.borrow().get_func_name_or_init(),
-                        func_ptr_b.borrow().get_func_name_or_init(),
-                        common_parent_ptr.borrow().get_func_name_or_init()
+                        func_ptr_a.read().unwrap().get_func_name_or_init(),
+                        func_ptr_b.read().unwrap().get_func_name_or_init(),
+                        common_parent_ptr.read().unwrap().get_func_name_or_init()
                     );
                     common_parent_ptr.clone()
                 }
@@ -666,7 +670,7 @@ impl ThreadTreeRecurChecker {
 
     /// update function stack during traversion and add recur entries detected to global list
     fn check_recur_impl(&mut self, cur_func_ptr: SharedFuncNodePtr) -> Result<()> {
-        let cur_func = cur_func_ptr.borrow();
+        let cur_func = cur_func_ptr.read().unwrap();
 
         let func_name = cur_func.get_func_name_or_init().to_owned();
         // check recursion
@@ -695,24 +699,29 @@ impl ThreadTreeRecurChecker {
                 "Function {} invocation at recursion detection should not have sub functions",
                 func_name
             );
-            let parent_func_ptr = cur_func_ptr.borrow().get_parent_ptr().ok_or_else(|| {
-                eyre::eyre!(
-                    "Parent function pointer not found for function: {}",
-                    func_name
-                )
-            })?;
+            let parent_func_ptr =
+                cur_func_ptr
+                    .read()
+                    .unwrap()
+                    .get_parent_ptr()
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "Parent function pointer not found for function: {}",
+                            func_name
+                        )
+                    })?;
 
             log::info!(
                 "Sub Function of {} follows:",
-                parent_func_ptr.borrow().get_func_name_or_init()
+                parent_func_ptr.read().unwrap().get_func_name_or_init()
             );
             let mut cnt = 0;
             for sub_func_ptr in parent_func_ptr.iter_sub_funcs() {
                 cnt += 1;
                 log::debug!(
                     "Function {} is a sub function of its parent: {}",
-                    sub_func_ptr.borrow().get_func_name_or_init(),
-                    parent_func_ptr.borrow().get_func_name_or_init()
+                    sub_func_ptr.read().unwrap().get_func_name_or_init(),
+                    parent_func_ptr.read().unwrap().get_func_name_or_init()
                 );
             }
             log::info!("Sub Function Count: {}", cnt);
@@ -736,7 +745,10 @@ impl ThreadTreeRecurChecker {
     }
 
     pub fn check_recur(mut self, root_func_ptr: SharedFuncNodePtr) -> Result<RecurRes> {
-        log::debug!("Cloned root length: {}", root_func_ptr.borrow().get_len());
+        log::debug!(
+            "Cloned root length: {}",
+            root_func_ptr.read().unwrap().get_len()
+        );
         self.check_recur_impl(root_func_ptr)?;
         Ok(self.recur_entries.into_iter().collect())
     }

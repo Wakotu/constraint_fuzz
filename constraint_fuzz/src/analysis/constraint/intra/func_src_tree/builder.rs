@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, rc::Rc, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 
 use crate::analysis::constraint::{
     exec_rec::case_map,
@@ -215,8 +219,8 @@ impl<'a> SrcTreeBuilder<'a> {
                 StmtNode::create_block_ptr(block_stmt, child_ptr_vec.clone(), self.stmt_scope_map);
             // parent ptr setting
             for (idx, child_ptr) in child_ptr_vec.into_iter().enumerate() {
-                child_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
-                child_ptr.borrow_mut().parent_idx_op = Some(idx);
+                child_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
+                child_ptr.write().unwrap().parent_idx_op = Some(idx);
             }
             Ok(cur_ptr)
         } else {
@@ -249,9 +253,9 @@ impl<'a> SrcTreeBuilder<'a> {
                     self.stmt_scope_map,
                 );
                 // parent ptr setting
-                then_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
+                then_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
                 if let Some(else_ptr) = else_ptr_op {
-                    else_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
+                    else_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
                 }
                 Ok(cur_ptr)
             } else {
@@ -293,7 +297,7 @@ impl<'a> SrcTreeBuilder<'a> {
                     self.stmt_scope_map,
                 );
                 // parent ptr setting
-                let stmt_node = cur_ptr.borrow();
+                let stmt_node = cur_ptr.read().unwrap();
                 let switch_node = stmt_node
                     .get_swtich_node()
                     .ok_or_else(|| eyre!("Build Error: no switch node inside a switch pointer"))?;
@@ -328,7 +332,7 @@ impl<'a> SrcTreeBuilder<'a> {
                     self.stmt_scope_map,
                 );
                 // parent ptr setting
-                body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
+                body_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
                 Ok(cur_ptr)
             } else {
                 bail!(
@@ -358,7 +362,7 @@ impl<'a> SrcTreeBuilder<'a> {
                     self.stmt_scope_map,
                 );
                 // parent ptr setting
-                body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
+                body_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
                 Ok(cur_ptr)
             } else {
                 bail!(
@@ -388,7 +392,7 @@ impl<'a> SrcTreeBuilder<'a> {
                     self.stmt_scope_map,
                 );
                 // parent ptr setting
-                body_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
+                body_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
                 Ok(cur_ptr)
             } else {
                 bail!("For statement at {:?} not found in for set", cur_entry.loc);

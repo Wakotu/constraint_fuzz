@@ -397,7 +397,7 @@ impl<'a> InnerStmtHandler<'a> {
         stmt_ptr: SharedStmtNodePtr,
         collector: &'a StmtCollector,
     ) -> Result<Self> {
-        let stmt_node = stmt_ptr.borrow();
+        let stmt_node = stmt_ptr.read().unwrap();
         let stmt_loc = stmt_node.get_loc();
         Self::new(stmt_loc, stmt_ptr.clone(), collector)
     }

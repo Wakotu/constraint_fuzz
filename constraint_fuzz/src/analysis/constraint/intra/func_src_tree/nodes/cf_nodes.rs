@@ -1,5 +1,5 @@
 use color_eyre::eyre::Result;
-use std::{cmp::Ordering, collections::HashMap, rc::Rc};
+use std::{cmp::Ordering, collections::HashMap, rc::Rc, sync::Arc};
 
 use eyre::bail;
 use my_macros::EquivByLoc;
@@ -35,7 +35,7 @@ impl IfNode {
     pub fn get_dest_body(&self, outer_act: &ExecAction) -> Result<Option<SharedStmtNodePtr>> {
         let dest_loc = outer_act.get_outer_destloc()?;
         let then_contains = {
-            let then_node = self.then_body.borrow();
+            let then_node = self.then_body.read().unwrap();
             then_node.src_loc_inner(dest_loc)
         };
         if then_contains {
@@ -46,7 +46,7 @@ impl IfNode {
             None => Ok(None),
             Some(else_ptr) => {
                 let else_contains = {
-                    let else_node = else_ptr.borrow();
+                    let else_node = else_ptr.read().unwrap();
                     else_node.src_loc_inner(dest_loc)
                 };
                 if else_contains {
@@ -167,9 +167,9 @@ impl SwitchNode {
     pub fn set_parent_state_for_caseptrs(&self, cur_ptr: SharedStmtNodePtr) {
         for (arm_idx, arm) in self.arm_vec.iter().enumerate() {
             for (case_idx, case_ptr) in arm.body.iter().enumerate() {
-                case_ptr.borrow_mut().parent_ptr_op = Some(Rc::downgrade(&cur_ptr));
-                case_ptr.borrow_mut().parent_idx_op = Some(case_idx);
-                case_ptr.borrow_mut().parent_armidx_op = Some(arm_idx);
+                case_ptr.write().unwrap().parent_ptr_op = Some(Arc::downgrade(&cur_ptr));
+                case_ptr.write().unwrap().parent_idx_op = Some(case_idx);
+                case_ptr.write().unwrap().parent_armidx_op = Some(arm_idx);
             }
         }
     }
@@ -235,7 +235,7 @@ impl<'a> LoopPart<'a> {
         let dest_loc = outer_act.get_outer_destloc()?;
 
         let body_contains = {
-            let body_node = self.body.borrow();
+            let body_node = self.body.read().unwrap();
             body_node.src_loc_inner(dest_loc)
         };
         if body_contains {
@@ -311,7 +311,7 @@ impl WhileNode {
         let dest_loc = outer_act.get_outer_destloc()?;
 
         let body_contains = {
-            let body_node = self.body.borrow();
+            let body_node = self.body.read().unwrap();
             body_node.src_loc_inner(dest_loc)
         };
         if body_contains {

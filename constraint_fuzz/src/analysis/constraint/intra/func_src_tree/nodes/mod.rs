@@ -4,7 +4,7 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     process::Child,
-    rc::{Rc, Weak},
+    sync::{Arc, RwLock, Weak},
 };
 
 use color_eyre::eyre::Result;
@@ -158,7 +158,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::Plain(PlainStmtNode::new(
                 &entry.loc,
                 func_invoc_map,
@@ -181,7 +181,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::Block(BlockStmtNode {
                 loc: block_stmt.loc.clone(),
                 block_type: block_stmt.block_type.clone(),
@@ -206,7 +206,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::CF(CFNode::If(cf_nodes::IfNode {
                 loc: if_stmt.loc.clone(),
                 cond_expr: SrcExpr::from_loc_and_invocs(&if_stmt.cond_loc, func_invoc_map),
@@ -230,7 +230,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::CF(CFNode::Switch(cf_nodes::SwitchNode {
                 loc: switch_stmt.loc.clone(),
                 expr: SrcExpr::from_loc_and_invocs(&switch_stmt.expr_loc, func_invoc_map),
@@ -254,7 +254,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::CF(CFNode::While(cf_nodes::WhileNode::new(
                 &while_stmt.loc,
                 &while_stmt.while_type,
@@ -279,7 +279,7 @@ impl StmtNode {
             None => vec![],
             Some(var_vec) => var_vec.clone(),
         };
-        Rc::new(RefCell::new(StmtNode {
+        Arc::new(RwLock::new(StmtNode {
             variants: StmtNodeVariants::CF(CFNode::For(cf_nodes::ForNode::new(
                 &for_stmt.loc,
                 match &for_stmt.init_loc {
@@ -304,8 +304,8 @@ impl StmtNode {
     }
 }
 
-pub type SharedStmtNodePtr = Rc<RefCell<StmtNode>>;
-pub type WeakStmtNodePtr = Weak<RefCell<StmtNode>>;
+pub type SharedStmtNodePtr = Arc<RwLock<StmtNode>>;
+pub type WeakStmtNodePtr = Weak<RwLock<StmtNode>>;
 
 // pub type PlainStmtNode = SrcExpr;
 
@@ -445,7 +445,7 @@ impl BlockStmtNode {
         if self.stmts.is_empty() {
             None
         } else {
-            Some(Rc::clone(&self.stmts[0]))
+            Some(Arc::clone(&self.stmts[0]))
         }
     }
 }
@@ -495,12 +495,12 @@ impl FuncSrcTree {
     }
 
     pub fn get_root(&self) -> SharedStmtNodePtr {
-        Rc::clone(&self.root)
+        Arc::clone(&self.root)
     }
 
     pub fn iter(&self) -> FuncSrcTreeIter<'_> {
         FuncSrcTreeIter {
-            cur_ptr_op: Some(Rc::clone(&self.root)),
+            cur_ptr_op: Some(Arc::clone(&self.root)),
             tree: self,
         }
     }
@@ -513,7 +513,7 @@ impl FuncSrcTree {
             match ptr {
                 None => break,
                 Some(p) => {
-                    let node = p.borrow();
+                    let node = p.read().unwrap();
                     for var in &node.valid_var_vec {
                         if !name_set.contains(&var.name) {
                             var_vec.push(var.clone());
@@ -543,22 +543,23 @@ impl<'a> FuncSrcTreeIter<'a> {
         par_ptr: SharedStmtNodePtr,
         cur_ptr: SharedStmtNodePtr,
     ) -> Option<SharedStmtNodePtr> {
-        let par_node = par_ptr.borrow();
+        let par_node = par_ptr.read().unwrap();
         match &par_node.variants {
             StmtNodeVariants::Block(block_node) => {
                 let idx = cur_ptr
-                    .borrow()
+                    .read()
+                    .unwrap()
                     .parent_idx_op
                     .expect("Block child must have idx");
                 if idx + 1 >= block_node.stmts.len() {
                     None
                 } else {
-                    Some(Rc::clone(&block_node.stmts[idx + 1]))
+                    Some(Arc::clone(&block_node.stmts[idx + 1]))
                 }
             }
             StmtNodeVariants::CF(cf_struct) => match cf_struct {
                 CFNode::Switch(switch_node) => {
-                    let cur_node = cur_ptr.borrow();
+                    let cur_node = cur_ptr.read().unwrap();
                     let arm_idx = cur_node
                         .parent_armidx_op
                         .as_ref()
@@ -567,13 +568,14 @@ impl<'a> FuncSrcTreeIter<'a> {
                         .get_arm_body(*arm_idx)
                         .expect("Could not find specified case with given index");
                     let idx = cur_ptr
-                        .borrow()
+                        .read()
+                        .unwrap()
                         .parent_idx_op
                         .expect("Switch case child must have idx");
                     if idx + 1 >= arm_body.len() {
                         None
                     } else {
-                        Some(Rc::clone(&arm_body[idx + 1]))
+                        Some(Arc::clone(&arm_body[idx + 1]))
                     }
                 }
                 _ => None,
@@ -587,7 +589,7 @@ impl<'a> FuncSrcTreeIter<'a> {
         // let mut par_ptr;
         loop {
             // get parent ptr
-            let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
+            let par_ptr = match &cur_ptr.read().unwrap().parent_ptr_op {
                 None => return Ok(None),
                 Some(wp) => match wp.upgrade() {
                     None => bail!("FuncSrcTree Iter next: Failed to upgrade father ptr"),
@@ -600,7 +602,7 @@ impl<'a> FuncSrcTreeIter<'a> {
             }
 
             // No next sibling: stop at loop node or go up
-            if par_ptr.borrow().is_loop_node() {
+            if par_ptr.read().unwrap().is_loop_node() {
                 return Ok(Some(par_ptr));
             }
             // go up
@@ -611,9 +613,9 @@ impl<'a> FuncSrcTreeIter<'a> {
     pub fn get_next_ptr(&self) -> Result<Option<SharedStmtNodePtr>> {
         let cur_ptr = match &self.cur_ptr_op {
             None => return Ok(None),
-            Some(p) => Rc::clone(p),
+            Some(p) => Arc::clone(p),
         };
-        let cur_node = cur_ptr.borrow();
+        let cur_node = cur_ptr.read().unwrap();
         match &cur_node.variants {
             StmtNodeVariants::Block(block_node) => Ok(block_node.get_first_stmt()),
             StmtNodeVariants::CF(_) => {
@@ -628,7 +630,7 @@ impl<'a> FuncSrcTreeIter<'a> {
     }
 
     fn update_loop_node_count(stmt_ptr: SharedStmtNodePtr) {
-        let mut stmt_node = stmt_ptr.borrow_mut();
+        let mut stmt_node = stmt_ptr.write().unwrap();
         stmt_node.update_loopnode_count();
     }
 
@@ -636,7 +638,7 @@ impl<'a> FuncSrcTreeIter<'a> {
         match &self.cur_ptr_op {
             None => false,
             Some(ptr) => {
-                let stmt_node = ptr.borrow();
+                let stmt_node = ptr.read().unwrap();
                 stmt_node.is_jump_stmt()
             }
         }
@@ -648,7 +650,7 @@ impl<'a> FuncSrcTreeIter<'a> {
             Some(ptr) => ptr.clone(),
         };
         let par_loop_ptr = loop {
-            let par_ptr = match &cur_ptr.borrow().parent_ptr_op {
+            let par_ptr = match &cur_ptr.read().unwrap().parent_ptr_op {
                 None => bail!(
                     "FuncSrcTree Iter goup_until_loopnode: Reached root without finding loop node"
                 ),
@@ -659,7 +661,7 @@ impl<'a> FuncSrcTreeIter<'a> {
                     Some(p) => p,
                 },
             };
-            if par_ptr.borrow().is_loop_node() {
+            if par_ptr.read().unwrap().is_loop_node() {
                 break par_ptr;
             }
             cur_ptr = par_ptr;
@@ -688,7 +690,7 @@ impl<'a> FuncSrcTreeIter<'a> {
         let next_ptr_op = {
             let stmt_node = match &self.cur_ptr_op {
                 None => bail!("FuncSrcTree Iter jump_next: Current pointer is None"),
-                Some(ptr) => ptr.borrow(),
+                Some(ptr) => ptr.read().unwrap(),
             };
             match &stmt_node.variants {
                 StmtNodeVariants::Plain(plain_node) => match &plain_node.stmt_type {
@@ -728,7 +730,7 @@ impl<'a> Iterator for FuncSrcTreeIter<'a> {
         };
 
         let is_cf = {
-            let stmt_node = ptr.borrow();
+            let stmt_node = ptr.read().unwrap();
             stmt_node.is_cf_node()
         };
 

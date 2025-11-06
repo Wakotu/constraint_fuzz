@@ -97,7 +97,7 @@ impl fmt::Debug for FuncAction {
                     f,
                     "Call({}) -> Child({:?}) at {:?}",
                     func_call_act.func_name,
-                    func_call_act.child_ptr.borrow(),
+                    func_call_act.child_ptr.read().unwrap(),
                     func_call_act.invoc_loc_op
                 )
             }

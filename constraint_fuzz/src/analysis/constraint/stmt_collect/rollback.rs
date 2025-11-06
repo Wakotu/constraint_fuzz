@@ -32,7 +32,7 @@ impl<'a> StmtCollector<'a> {
         let sj_act = act.derive_postsj_act().ok_or_else(|| {
             eyre::eyre!("Rollback Exit: expected post setjmp action at rollback exit")
         })?;
-        let next_ptr = src_tree.get_nextptr_by_rbexit(sj_act);
+        let next_ptr = src_tree.get_nextptr_by_rbexit(sj_act)?;
         src_iter.update(Some(next_ptr));
         Ok(())
     }

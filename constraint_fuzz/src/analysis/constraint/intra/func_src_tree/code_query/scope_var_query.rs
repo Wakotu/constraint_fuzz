@@ -96,7 +96,7 @@ impl SrcVar {
         let mut cur_ptr = stmt_ptr.clone();
         let mut names_seen: HashSet<String> = HashSet::new();
         loop {
-            for var in cur_ptr.borrow().valid_var_vec.iter() {
+            for var in cur_ptr.read().unwrap().valid_var_vec.iter() {
                 if names_seen.contains(&var.name) {
                     continue;
                 }
@@ -104,7 +104,7 @@ impl SrcVar {
                 names_seen.insert(var.name.to_string());
             }
             //
-            let par_ptr = match cur_ptr.borrow().get_parent_ptr() {
+            let par_ptr = match cur_ptr.read().unwrap().get_parent_ptr() {
                 Some(ptr) => ptr,
                 None => break,
             };
@@ -117,7 +117,7 @@ impl SrcVar {
         let mut name_var_map: HashMap<String, SrcVar> = HashMap::new();
         let mut cur_ptr = stmt_ptr.clone();
         loop {
-            for var in cur_ptr.borrow().valid_var_vec.iter() {
+            for var in cur_ptr.read().unwrap().valid_var_vec.iter() {
                 let name = &var.name;
                 name_var_map
                     .entry(name.to_string())
@@ -125,7 +125,7 @@ impl SrcVar {
             }
 
             // get parent ptr
-            let par_ptr = match cur_ptr.borrow().get_parent_ptr() {
+            let par_ptr = match cur_ptr.read().unwrap().get_parent_ptr() {
                 Some(ptr) => ptr,
                 None => break,
             };
