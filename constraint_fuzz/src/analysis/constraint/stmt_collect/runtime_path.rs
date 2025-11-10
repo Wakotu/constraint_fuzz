@@ -17,4 +17,5 @@ pub struct ThreadRuntimePath {
 
 pub struct RuntimeTree {
     data: HashMap<Tid, ThreadRuntimePath>,
+    main_tid: Tid,
 }

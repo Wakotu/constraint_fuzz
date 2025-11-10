@@ -8,7 +8,7 @@ use crate::analysis::constraint::intra::func_src_tree::{
     code_query::scope_var_query::SrcVar, stmts::QLLoc,
 };
 use crate::analysis::constraint::stmt_collect::{
-    InnerCondRec, ProcessUnit, ProcessUnitVariant, StmtCollector,
+    path_collect::StmtCollector, InnerCondRec, ProcessUnit, ProcessUnitVariant,
 };
 use std::slice::Iter;
 

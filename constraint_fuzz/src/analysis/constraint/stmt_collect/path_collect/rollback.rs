@@ -1,7 +1,7 @@
 use crate::analysis::constraint::{
     inter::exec_tree::thread_tree::FuncActIter,
     intra::func_src_tree::nodes::{FuncSrcTree, FuncSrcTreeIter},
-    stmt_collect::StmtCollector,
+    stmt_collect::path_collect::StmtCollector,
 };
 use color_eyre::eyre::Result;
 use eyre::bail;

@@ -7,7 +7,9 @@ use crate::analysis::constraint::{
         },
         stmts::QLLoc,
     },
-    stmt_collect::{inner_stmt::InnerStmtHandler, ProcessUnit, StmtCollector},
+    stmt_collect::{
+        path_collect::inner_stmt::InnerStmtHandler, path_collect::StmtCollector, ProcessUnit,
+    },
 };
 
 use color_eyre::eyre::Result;
