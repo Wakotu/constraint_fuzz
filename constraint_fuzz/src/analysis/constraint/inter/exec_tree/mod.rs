@@ -22,6 +22,23 @@ pub struct ExecForest {
 }
 
 impl ExecForest {
+    pub fn get_thread_tree(&self, tid: Tid) -> Result<&ExecThreadTree> {
+        let idx = self
+            .tid_mapping
+            .get(&tid)
+            .ok_or_else(|| eyre::eyre!("Failed to get thread tree idx for tid {}", tid))?;
+        self.thread_tree_list
+            .get(*idx)
+            .ok_or_else(|| eyre::eyre!("Failed to get thread tree for tid {}", tid))
+    }
+
+    pub fn get_main_tid(&self) -> Result<Tid> {
+        self.thread_tree_list
+            .get(self.main_idx)
+            .map(|tree| tree.get_tid())
+            .ok_or_else(|| eyre::eyre!("Failed to get main thread tree"))
+    }
+
     pub fn get_main_root_ptr(&self) -> SharedFuncNodePtr {
         self.thread_tree_list[self.main_idx].get_root_ptr()
     }

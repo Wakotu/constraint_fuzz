@@ -13,7 +13,7 @@ use crate::analysis::constraint::{
         nodes::{SharedStmtNodePtr, SrcExpr},
         stmts::{QLLoc, WhileType},
     },
-    stmt_collect::ProcessUnit,
+    stmt_collect::{ExprPu, ProcessUnit},
 };
 
 #[derive(EquivByLoc)]
@@ -100,8 +100,12 @@ pub struct SwitchArm {
 
 impl SwitchArm {
     pub fn derive_cond_pu(&self, expr_pu: ProcessUnit) -> Result<ProcessUnit> {
+        let expr_pu = expr_pu
+            .get_exprpu()
+            .ok_or_else(|| eyre::eyre!("Can only call derive_cond_pu() on expr pu"))?;
         let case_lit = self.case.get_case_literal()?;
-        Ok(ProcessUnit::concat_cond_pu(expr_pu, case_lit))
+        let cond_pu = ExprPu::concat_cond_pu(expr_pu, case_lit);
+        Ok(ProcessUnit::from_exprpu(cond_pu))
     }
 
     pub fn get_first_body_ptr(&self) -> Option<SharedStmtNodePtr> {

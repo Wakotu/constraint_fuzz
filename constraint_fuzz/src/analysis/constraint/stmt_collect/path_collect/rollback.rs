@@ -1,12 +1,12 @@
 use crate::analysis::constraint::{
     inter::exec_tree::thread_tree::FuncActIter,
     intra::func_src_tree::nodes::{FuncSrcTree, FuncSrcTreeIter},
-    stmt_collect::path_collect::StmtCollector,
+    stmt_collect::path_collect::RuntimePathCollector,
 };
 use color_eyre::eyre::Result;
 use eyre::bail;
 
-impl<'a> StmtCollector<'a> {
+impl RuntimePathCollector {
     /// Returns if is inner rollback
     pub fn rollback_detect(act: &mut FuncActIter) -> Result<bool> {
         let act = act.get_cur().ok_or_else(|| {

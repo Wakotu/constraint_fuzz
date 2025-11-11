@@ -13,7 +13,7 @@ use crate::analysis::constraint::inter::{
         },
         thread_tree::{incre_dot_counter, DotId, SharedFuncNodePtr, Tid, UBVHit},
     },
-    loc::SrcLocEnum,
+    loc::{SrcLocEnum, ValidSrcLoc},
 };
 
 use rollback::RollbackAction;
@@ -374,6 +374,16 @@ impl ThreadAction {
 
     pub fn get_thread_id(&self) -> Tid {
         self.tid
+    }
+
+    pub fn get_valid_loc(&self) -> Result<&ValidSrcLoc> {
+        match &self.loc {
+            SrcLocEnum::Valid(valid_loc) => Ok(valid_loc),
+            _ => Err(eyre::eyre!(
+                "Location is not a valid source location: {:?}",
+                self.loc
+            )),
+        }
     }
 
     pub fn parse_thread_act_rec(line: &str) -> std::result::Result<Self, ActrecParseError> {

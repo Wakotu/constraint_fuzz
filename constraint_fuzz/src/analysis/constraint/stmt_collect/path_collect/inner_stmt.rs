@@ -1,15 +1,17 @@
 use crate::analysis::constraint::inter::exec_tree::action::rollback::{RollbackAction, SJVariant};
 use crate::analysis::constraint::inter::exec_tree::action::{
-    ExecAction, FuncAction, FuncCallAction, JumpActionType,
+    ExecAction, FuncAction, FuncCallAction, JumpActionType, ThreadAction,
 };
 use crate::analysis::constraint::inter::loc::{SrcLocEnum, ValidSrcLoc};
 use crate::analysis::constraint::intra::func_src_tree::nodes::SharedStmtNodePtr;
 use crate::analysis::constraint::intra::func_src_tree::{
     code_query::scope_var_query::SrcVar, stmts::QLLoc,
 };
+use crate::analysis::constraint::stmt_collect::path_collect::thread::ThreadJoinHandle;
 use crate::analysis::constraint::stmt_collect::{
-    path_collect::StmtCollector, InnerCondRec, ProcessUnit, ProcessUnitVariant,
+    path_collect::RuntimePathCollector, InnerCondRec, ProcessUnit,
 };
+use crate::analysis::constraint::stmt_collect::{ExprPu, ExprPuVariant};
 use std::slice::Iter;
 
 use color_eyre::eyre::Result;
@@ -18,6 +20,7 @@ use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::process::id;
+use tokio::runtime::Handle;
 
 #[derive(PartialEq, Eq)]
 pub struct InvocSubstOpr {
@@ -358,16 +361,16 @@ impl CondStateVec {
 
 pub struct InnerStmtHandler<'a> {
     // derive from ql_loc of specified expr/stmt
-    stmt_info: StmtStrInfo,
+    pub stmt_info: StmtStrInfo,
     // stmt_ptr: SharedStmtNodePtr,
-    collector: &'a StmtCollector<'a>,
+    pub rtp_cltr: &'a RuntimePathCollector,
     // derive from stmt_ptr
     live_var_vec: Vec<SrcVar>,
     // middle state
-    invoc_sub_recs: InvocSubRecs,
+    invoc_subs_recs: InvocSubRecs,
     cond_state_vec: CondStateVec,
     // result field
-    pu_vec: Vec<ProcessUnit>,
+    pub pu_vec: Vec<ProcessUnit>,
 }
 
 impl<'a> InnerStmtHandler<'a> {
@@ -376,16 +379,16 @@ impl<'a> InnerStmtHandler<'a> {
         expr_loc: &QLLoc,
         // used for valid var query
         stmt_ptr: SharedStmtNodePtr,
-        collector: &'a StmtCollector,
+        collector: &'a RuntimePathCollector,
     ) -> Result<Self> {
         let stmt_info = StmtStrInfo::from_qlloc(expr_loc)?;
         let live_var_vec = SrcVar::get_live_var(stmt_ptr.clone());
 
         Ok(Self {
             stmt_info,
-            invoc_sub_recs: InvocSubRecs::new(),
+            invoc_subs_recs: InvocSubRecs::new(),
             // stmt_ptr: stmt_ptr.clone(),
-            collector,
+            rtp_cltr: collector,
             live_var_vec,
             cond_state_vec: CondStateVec::new(),
             pu_vec: vec![],
@@ -395,17 +398,17 @@ impl<'a> InnerStmtHandler<'a> {
     // construction method
     pub fn from_stmt_ptr(
         stmt_ptr: SharedStmtNodePtr,
-        collector: &'a StmtCollector,
+        collector: &'a RuntimePathCollector,
     ) -> Result<Self> {
         let stmt_node = stmt_ptr.read().unwrap();
         let stmt_loc = stmt_node.get_loc();
         Self::new(stmt_loc, stmt_ptr.clone(), collector)
     }
 
-    fn arg_expr_collect(&mut self, left_idx: usize) -> Result<(Vec<ArgExpr>, usize)> {
+    pub fn arg_expr_collect(&mut self, left_idx: usize) -> Result<(Vec<ArgExpr>, usize)> {
         let mut left_loc = left_idx + 1;
         let mut arg_expr_vec = vec![];
-        let mut next_sub_idx = self.invoc_sub_recs.next_on_loc(left_loc)?;
+        let mut next_sub_idx = self.invoc_subs_recs.next_on_loc(left_loc)?;
         let mut next_cond_idx = 0;
 
         let right_loc = loop {
@@ -415,8 +418,8 @@ impl<'a> InnerStmtHandler<'a> {
 
             // arg segment recognize and inner substitution execution
             while self.stmt_info.byte_at(loc)? != b',' && self.stmt_info.byte_at(loc)? != b')' {
-                if self.invoc_sub_recs.is_start(loc, next_sub_idx)? {
-                    let sub_state = &self.invoc_sub_recs.data[next_sub_idx];
+                if self.invoc_subs_recs.is_start(loc, next_sub_idx)? {
+                    let sub_state = &self.invoc_subs_recs.data[next_sub_idx];
                     // ret_var
                     if let Some(var) = &sub_state.opr.ret_var_op {
                         ret_var_vec.push(var.clone());
@@ -426,7 +429,7 @@ impl<'a> InnerStmtHandler<'a> {
                     // arg seg update: do not allow void function invocation
                     arg_seg.push_str(&sub_state.opr.get_nonvoid_retstr()?);
                     // update idx
-                    next_sub_idx = self.invoc_sub_recs.next_on_idx(next_sub_idx, true)?;
+                    next_sub_idx = self.invoc_subs_recs.next_on_idx(next_sub_idx, true)?;
                 } else {
                     arg_seg.push(self.stmt_info.byte_at(loc)? as char);
                     loc += 1;
@@ -457,6 +460,11 @@ impl<'a> InnerStmtHandler<'a> {
         Ok((arg_expr_vec, right_loc))
     }
 
+    pub fn func_paramvar_vec(&self, func_name: &str) -> Result<&Vec<SrcVar>> {
+        let func_tree = self.rtp_cltr.get_src_func_tree(func_name)?;
+        Ok(func_tree.get_formal_param_vec())
+    }
+
     fn pre_assign_stmts_construct(
         &mut self,
         left_idx: usize,
@@ -464,10 +472,7 @@ impl<'a> InnerStmtHandler<'a> {
     ) -> Result<(Vec<ProcessUnit>, usize)> {
         let (arg_expr_vec, right_idx) = self.arg_expr_collect(left_idx)?;
 
-        let param_var_vec = {
-            let called_func_tree = self.collector.get_src_func_tree(func_name)?;
-            called_func_tree.get_formal_param_vec()
-        };
+        let param_var_vec = self.func_paramvar_vec(func_name)?;
 
         assert!(
             arg_expr_vec.len() == param_var_vec.len(),
@@ -486,24 +491,27 @@ impl<'a> InnerStmtHandler<'a> {
     /**
      * Function Invocation action handle
      */
-    fn func_invoc_handle(&mut self, call_act: &FuncCallAction) -> Result<bool> {
-        let (start_idx, left_idx) = self.stmt_info.get_start_idxs(call_act)?;
+    fn func_invoc_handle(
+        &mut self,
+        call_act: &FuncCallAction,
+    ) -> Result<(bool, Vec<ThreadJoinHandle>)> {
+        let (start_idx, left_idx) = self.stmt_info.get_startidxs_callact(call_act)?;
         let (pre_pu_vec, right_idx) =
             self.pre_assign_stmts_construct(left_idx, &call_act.func_name)?;
         self.pu_vec.extend(pre_pu_vec);
 
-        let called_func_tree = self.collector.get_src_func_tree(&call_act.func_name)?;
-        let (func_pu_vec, ret_var_op, is_rb) = self
-            .collector
+        let called_func_tree = self.rtp_cltr.get_src_func_tree(&call_act.func_name)?;
+        let (func_pu_vec, ret_var_op, is_rb, hdl_vec) = self
+            .rtp_cltr
             .collect_intra(called_func_tree, call_act.child_ptr.clone())?;
         self.pu_vec.extend(func_pu_vec);
 
         if is_rb {
-            Ok(true)
+            Ok((true, hdl_vec))
         } else {
             // return value handle: update subst recs
-            self.invoc_sub_recs.add(start_idx, right_idx, ret_var_op);
-            Ok(false)
+            self.invoc_subs_recs.add(start_idx, right_idx, ret_var_op);
+            Ok((false, hdl_vec))
         }
     }
 
@@ -524,11 +532,14 @@ impl<'a> InnerStmtHandler<'a> {
     }
 
     // one act handle interface
-    pub fn act_handle(&mut self, act: &ExecAction) -> Result<bool> {
+    pub fn act_handle(&mut self, act: &ExecAction) -> Result<(bool, Vec<ThreadJoinHandle>)> {
         match act {
             // handle func invocation
             ExecAction::Func(func_act) => match func_act {
-                FuncAction::Call(call_act) => self.func_invoc_handle(call_act),
+                FuncAction::Call(call_act) => {
+                    let (is_rb, hdl_vec) = self.func_invoc_handle(call_act)?;
+                    Ok((is_rb, hdl_vec))
+                }
                 // Unwind should not be handled in inner stmt handler
                 _ => {
                     bail!("Unexpected Func action: {:?}", func_act);
@@ -538,9 +549,9 @@ impl<'a> InnerStmtHandler<'a> {
             ExecAction::Intra(jump_act) => match &jump_act.jump_variants {
                 JumpActionType::Br { val_loc } => {
                     self.inner_cond_val_handle(val_loc, jump_act.cond_val)?;
-                    Ok(false)
+                    Ok((false, vec![]))
                 }
-                JumpActionType::MergeBr => Ok(false),
+                JumpActionType::MergeBr => Ok((false, vec![])),
                 jump_act_type => bail!(
                     "Stmt Action handle: Unexpected jump action type: {:?}",
                     jump_act_type
@@ -549,28 +560,33 @@ impl<'a> InnerStmtHandler<'a> {
 
             ExecAction::Select(sel_act) => {
                 self.inner_cond_val_handle(&sel_act.loc, sel_act.val)?;
-                Ok(false)
+                Ok((false, vec![]))
             }
 
             ExecAction::UBV(ubv_hit) => {
                 self.inner_cond_val_handle(&ubv_hit.loc, ubv_hit.val)?;
-                Ok(false)
+                Ok((false, vec![]))
             }
 
             ExecAction::Rollback(rb_act) => {
                 match rb_act {
-                    RollbackAction::Longjmp(_) => Ok(false),
+                    RollbackAction::Longjmp(_) => Ok((false, vec![])),
                     RollbackAction::Setjmp(sj_act) => match &sj_act.sj_variants {
                         // Post Long should be process at rollback exit, not repeated here
                         SJVariant::PostLong => {
                             bail!("Stmt Action handle: Post Longjmp should be consumed at rollback exit")
                         }
-                        SJVariant::PreLong => Ok(false),
+                        SJVariant::PreLong => Ok((false, vec![])),
                     },
                     RollbackAction::Unwind(_) => {
                         bail!("Stmt Action handle: Unwind action should not appear in inner statement handling")
                     }
                 }
+            }
+
+            ExecAction::Thread(thread_act) => {
+                let handle = self.thread_invoc_handle(thread_act)?;
+                Ok((false, vec![handle]))
             }
 
             _ => {
@@ -596,9 +612,11 @@ impl<'a> InnerStmtHandler<'a> {
             if !cond_state.is_valid() {
                 continue;
             }
-            next_sub_idx_op =
-                self.invoc_sub_recs
-                    .next_on_cond_with_idx(cond_state, next_sub_idx_op, &mut off)?;
+            next_sub_idx_op = self.invoc_subs_recs.next_on_cond_with_idx(
+                cond_state,
+                next_sub_idx_op,
+                &mut off,
+            )?;
 
             let new_idx = cond_state.data.inner_idx as i32 + off;
             if new_idx < 0 {
@@ -616,14 +634,14 @@ impl<'a> InnerStmtHandler<'a> {
 
     fn derive_final_pu(&mut self) -> Result<ProcessUnit> {
         let mut loc = 0;
-        let mut next_sub_idx = self.invoc_sub_recs.next_on_loc(loc)?;
+        let mut next_sub_idx = self.invoc_subs_recs.next_on_loc(loc)?;
 
         // Execute substitution: construct final pu str and ret var collection
         let mut pu_str = String::new();
         let mut ret_var_vec: Vec<SrcVar> = vec![];
         while self.stmt_info.valid_idx(loc) {
-            if self.invoc_sub_recs.is_start(loc, next_sub_idx)? {
-                let sub_state = &self.invoc_sub_recs.data[next_sub_idx];
+            if self.invoc_subs_recs.is_start(loc, next_sub_idx)? {
+                let sub_state = &self.invoc_subs_recs.data[next_sub_idx];
                 if let Some(var) = &sub_state.opr.ret_var_op {
                     ret_var_vec.push(var.clone());
                 }
@@ -631,7 +649,7 @@ impl<'a> InnerStmtHandler<'a> {
                 // allows void
                 pu_str.push_str(&sub_state.opr.get_ret_str());
                 loc = sub_state.opr.end_idx + 1;
-                next_sub_idx = self.invoc_sub_recs.next_on_idx(next_sub_idx, false)?;
+                next_sub_idx = self.invoc_subs_recs.next_on_idx(next_sub_idx, false)?;
             } else {
                 pu_str.push(self.stmt_info.byte_at(loc)? as char);
                 loc += 1;
@@ -645,12 +663,12 @@ impl<'a> InnerStmtHandler<'a> {
         // Cond Rec Derivation
         let cond_recs = self.derive_final_pu_cond_recs()?;
 
-        let pu = ProcessUnit {
+        let pu = ProcessUnit::Expr(ExprPu {
             content: pu_str,
             valid_var_vec,
             cond_rec_vec: cond_recs,
-            variants: ProcessUnitVariant::Plain {},
-        };
+            variants: ExprPuVariant::Plain {},
+        });
         Ok(pu)
     }
 
@@ -757,7 +775,7 @@ impl StmtStrInfo {
             .ok_or_else(|| eyre::eyre!("Function name {} not found in QL string", func_name))
     }
 
-    fn get_relative_idx_by_valid_loc(&self, valid_loc: &ValidSrcLoc) -> usize {
+    fn get_relativeidx_by_validloc(&self, valid_loc: &ValidSrcLoc) -> usize {
         let mut idx = 0;
         for (line_off, line_len) in self.line_len_vec.iter().enumerate() {
             let cur_line = self.stmt_loc.start_line + line_off;
@@ -787,7 +805,7 @@ impl StmtStrInfo {
                     valid_loc.file_path == self.stmt_loc.file_path,
                     "QLStrInfo Relative: File path mismatch"
                 );
-                Ok(self.get_relative_idx_by_valid_loc(valid_loc))
+                Ok(self.get_relativeidx_by_validloc(valid_loc))
             }
         }
     }
@@ -806,13 +824,26 @@ impl StmtStrInfo {
                         valid_loc.file_path == self.stmt_loc.file_path,
                         "QLStrInfo Relative: File path mismatch"
                     );
-                    Ok(self.get_relative_idx_by_valid_loc(valid_loc))
+                    Ok(self.get_relativeidx_by_validloc(valid_loc))
                 }
             },
         }
     }
 
-    pub fn get_start_idxs(&self, call_act: &FuncCallAction) -> Result<(usize, usize)> {
+    pub fn get_startidxs_threadact(&self, thread_act: &ThreadAction) -> Result<(usize, usize)> {
+        const THREAD_CREATE_FUNCNAME: &str = "pthread_create";
+        let act_loc = thread_act.get_valid_loc()?;
+        let invoc_idx = self.get_relativeidx_by_validloc(act_loc);
+
+        let mut idx = invoc_idx + THREAD_CREATE_FUNCNAME.len();
+        while idx < self.content.len() && self.content.as_bytes()[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        let left_idx = idx;
+        Ok((invoc_idx, left_idx))
+    }
+
+    pub fn get_startidxs_callact(&self, call_act: &FuncCallAction) -> Result<(usize, usize)> {
         let invoc_idx =
             self.get_rela_idx_for_func_invoc(&call_act.func_name, call_act.invoc_loc_op.as_ref())?;
 

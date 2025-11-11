@@ -13,11 +13,11 @@ use crate::analysis::constraint::{
     stmt_collect::ProcessUnit,
 };
 
-use super::StmtCollector;
+use super::RuntimePathCollector;
 use color_eyre::eyre::Result;
 use eyre::bail;
 
-impl<'a> StmtCollector<'a> {
+impl RuntimePathCollector {
     fn loopout_act_consume_and_check(act_iter: &mut FuncActIter) -> Result<()> {
         let loop_out_act = match act_iter.next() {
             None => bail!("Normal While Node Handle: loop out action should be present"),

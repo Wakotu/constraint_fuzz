@@ -1,7 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{
-    analysis::constraint::exec_rec::ExecRec, deopt::utils::buffer_read_to_bytes, execution::expe,
+    analysis::constraint::{
+        exec_rec::ExecRec,
+        inter::exec_tree::ExecForest,
+        intra::func_src_tree::builder::FuncSrcForest,
+        stmt_collect::{
+            path_collect::RuntimePathCollector,
+            runtime_path::{RuntimePathTree, ThreadRuntimePath},
+        },
+    },
+    deopt::utils::buffer_read_to_bytes,
+    execution::expe,
     feedback::branches::constraints::UBConstraint,
 };
 use color_eyre::eyre::Result;
@@ -53,5 +66,37 @@ impl RevAnalyzer {
             // work_dir: expe_dir.as_ref().to_path_buf(),
             exec_list,
         })
+    }
+}
+
+pub struct RtpTreeCollector {
+    ub_cons: UBConstraint,
+    func_src_forest: &'static FuncSrcForest,
+    exec_forest_ptr: Arc<ExecForest>,
+}
+
+impl RtpTreeCollector {
+    pub fn new(
+        ub_cons: UBConstraint,
+        func_src_forest: &'static FuncSrcForest,
+        exec_forest_ptr: Arc<ExecForest>,
+    ) -> Self {
+        Self {
+            ub_cons,
+            func_src_forest,
+            exec_forest_ptr,
+        }
+    }
+
+    fn main_path_collect(&self) -> Result<Vec<ThreadRuntimePath>> {
+        RuntimePathCollector::main_path_collect(self)
+    }
+
+    pub fn collect(&self) -> Result<RuntimePathTree> {
+        // todo!()
+        let path_vec = self.main_path_collect()?;
+        let main_tid = self.exec_forest_ptr.get_main_tid()?;
+        let rtp_tree = RuntimePathTree::from_path_vec(path_vec, main_tid);
+        Ok(rtp_tree)
     }
 }

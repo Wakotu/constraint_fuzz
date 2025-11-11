@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::iter::Iterator;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+use std::sync::{Arc, BarrierWaitResult, Mutex, OnceLock, RwLock, Weak};
 use std::{
     fs::File,
     io::{BufRead, BufReader},
@@ -236,6 +236,22 @@ impl DotId for ExecFuncNode {
 }
 
 impl ExecFuncNode {
+    pub fn get_entryfunc_ptr(&self) -> Result<SharedFuncNodePtr> {
+        assert!(
+            self.is_init(),
+            "Ought to call get_entryfunc_ptr on init node."
+        );
+        let entry_act = self
+            .data
+            .get(0)
+            .ok_or_else(|| eyre::eyre!("Init node should have one and only one action"))?;
+
+        match entry_act {
+            ExecAction::Func(FuncAction::Call(call_act)) => Ok(call_act.child_ptr.clone()),
+            _ => bail!("Entry action of init node should be a function call action."),
+        }
+    }
+
     pub fn init_node() -> Self {
         Self {
             node_type: FuncEntryType::Init,
@@ -401,6 +417,18 @@ pub struct ExecThreadTree {
 }
 
 impl ExecThreadTree {
+    pub fn get_entry_funcname(&self) -> Result<String> {
+        let init_node = self.root_ptr.read().unwrap();
+        let entry_ptr = init_node.get_entryfunc_ptr()?;
+        let entry_name = entry_ptr
+            .read()
+            .unwrap()
+            .get_func_name()
+            .ok_or_else(|| eyre::eyre!("Entry function should have a name"))?
+            .to_string();
+        Ok(entry_name)
+    }
+
     fn parse_tid<P: AsRef<Path>>(fpath: P) -> Result<usize> {
         let fname = fpath
             .as_ref()

@@ -1,36 +1,86 @@
+use std::sync::Arc;
+
 use crate::{
     analysis::constraint::{
-        inter::exec_tree::{action::ExecAction, ExecForest},
-        intra::func_src_tree::{
-            builder::FuncSrcForest,
-            nodes::{FuncSrcTree, SharedStmtNodePtr},
+        inter::exec_tree::{
+            action::ExecAction,
+            thread_tree::{ExecFuncNode, FuncActIter, SharedFuncNodePtr, Tid},
+            ExecForest,
         },
+        intra::{
+            self,
+            func_src_tree::{
+                builder::FuncSrcForest,
+                code_query::scope_var_query::SrcVar,
+                nodes::{
+                    cf_nodes::{CFNode, IfNode},
+                    FuncSrcTree, FuncSrcTreeIter, PlainStmtNode, SharedStmtNodePtr, SrcExpr,
+                    StmtNodeVariants,
+                },
+                stmts::QLLoc,
+            },
+        },
+        stmt_collect::{
+            path_collect::{inner_stmt::InnerStmtHandler, thread::ThreadJoinHandle},
+            runtime_path::ThreadRuntimePath,
+            ProcessUnit,
+        },
+        RtpTreeCollector,
     },
     feedback::branches::constraints::UBConstraint,
 };
+use color_eyre::eyre::Result;
+use eyre::bail;
 
 // inner implementation modules
 pub mod inner_stmt;
 pub mod loop_handle;
 pub mod rollback;
 pub mod switch_handle;
-pub struct StmtCollector<'a> {
-    exec_forest: &'a ExecForest,
-    func_src_forest: &'a FuncSrcForest,
-    ub_cons: &'a UBConstraint,
+pub mod thread;
+
+pub struct RuntimePathCollector {
+    tid: Tid,
+    exec_forest_ptr: Arc<ExecForest>,
+    func_src_forest: &'static FuncSrcForest,
+    exec_root_ptr: SharedFuncNodePtr,
+    ub_cons: UBConstraint,
+
+    // middle state
+    subhdl_vec: Vec<ThreadJoinHandle>,
 }
 
-impl<'a> StmtCollector<'a> {
-    pub fn new(
-        exec_forest: &'a ExecForest,
-        func_src_forest: &'a FuncSrcForest,
-        ub_cons: &'a UBConstraint,
-    ) -> Self {
-        Self {
-            exec_forest,
-            func_src_forest,
-            ub_cons,
+impl RuntimePathCollector {
+    pub fn main_path_collect(tree_cltr: &RtpTreeCollector) -> Result<Vec<ThreadRuntimePath>> {
+        let main_root_ptr = tree_cltr.exec_forest_ptr.get_main_root_ptr();
+        let main_tid = tree_cltr.exec_forest_ptr.get_main_tid()?;
+
+        let mut path_cltr = Self {
+            tid: main_tid,
+            exec_forest_ptr: tree_cltr.exec_forest_ptr.clone(),
+            func_src_forest: tree_cltr.func_src_forest,
+            exec_root_ptr: main_root_ptr,
+            ub_cons: tree_cltr.ub_cons.clone(),
+            subhdl_vec: vec![],
+        };
+
+        let main_tid = tree_cltr.exec_forest_ptr.get_main_tid()?;
+        let pu_vec = path_cltr.path_collect(vec![])?;
+        let main_path = ThreadRuntimePath::main_path_construct(main_tid, pu_vec);
+        let path_vec = path_cltr.extend_sub_pathvecs(main_path);
+
+        Ok(path_vec)
+    }
+
+    pub fn extend_sub_pathvecs(self, cur_path: ThreadRuntimePath) -> Vec<ThreadRuntimePath> {
+        let mut path_vec = vec![cur_path];
+        for handle in self.subhdl_vec {
+            let sub_pathvec = handle
+                .join()
+                .expect("Sub Thread path collect: Failed to wait for sub thread handle");
+            path_vec.extend(sub_pathvec);
         }
+        path_vec
     }
 
     fn is_inside_loop(stmt_ptr: SharedStmtNodePtr) -> bool {
@@ -70,9 +120,11 @@ impl<'a> StmtCollector<'a> {
         stmt_ptr: SharedStmtNodePtr,
         act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
-    ) -> Result<(Option<ProcessUnit>, bool)> {
+    ) -> Result<(Option<ProcessUnit>, bool, Vec<ThreadJoinHandle>)> {
         let mut handler = InnerStmtHandler::from_stmt_ptr(stmt_ptr.clone(), self)?;
         let mut uw_detect = false;
+        let mut hdl_vec = vec![];
+
         loop {
             let act_op = act_iter.get_cur();
             let act = match act_op {
@@ -87,7 +139,8 @@ impl<'a> StmtCollector<'a> {
             if act.is_longjmp() {
                 uw_detect = true;
             }
-            let is_rb = handler.act_handle(act)?;
+            let (is_rb, inner_hdlvec) = handler.act_handle(act)?;
+            hdl_vec.extend(inner_hdlvec);
             if is_rb {
                 uw_detect = true;
                 break; // break earlier
@@ -96,10 +149,10 @@ impl<'a> StmtCollector<'a> {
         }
         if plain_stmt.is_return_stmt() {
             let ret_expr = handler.get_finalpu_while_update(pu_vec)?;
-            Ok((Some(ret_expr), uw_detect))
+            Ok((Some(ret_expr), uw_detect, hdl_vec))
         } else {
             handler.update_pu(pu_vec)?;
-            Ok((None, uw_detect))
+            Ok((None, uw_detect, hdl_vec))
         }
     }
 
@@ -110,7 +163,7 @@ impl<'a> StmtCollector<'a> {
         &self,
         cfseg: &SrcExpr,
         stmt_ptr: SharedStmtNodePtr,
-        act_iter: &'a mut FuncActIter,
+        act_iter: &mut FuncActIter,
         pu_vec: &mut Vec<ProcessUnit>,
     ) -> Result<bool> {
         let mut handler = InnerStmtHandler::new(cfseg.get_loc(), stmt_ptr.clone(), self)?;
@@ -126,7 +179,11 @@ impl<'a> StmtCollector<'a> {
             if !cfseg.act_inner(act)? {
                 break;
             }
-            let is_rb = handler.act_handle(act)?;
+            let (is_rb, inner_hdlvec) = handler.act_handle(act)?;
+            assert!(
+                inner_hdlvec.is_empty(),
+                "Thread Action should not appear at control flow segment handle"
+            );
             if is_rb {
                 uw_detect = true;
                 break; // break earlier
@@ -138,7 +195,7 @@ impl<'a> StmtCollector<'a> {
     }
 
     // Return trailing bool: if enters rollback status
-    fn cond_expr_handle(
+    fn cond_expr_handle<'a>(
         &self,
         cond_expr: &SrcExpr,
         stmt_ptr: SharedStmtNodePtr,
@@ -159,7 +216,11 @@ impl<'a> StmtCollector<'a> {
             if !is_inner {
                 break (Some(act), false);
             }
-            let is_rb = handler.act_handle(act)?;
+            let (is_rb, inner_hdlvec) = handler.act_handle(act)?;
+            assert!(
+                inner_hdlvec.is_empty(),
+                "Thread Action should not appear at cond expr handle"
+            );
             if is_rb {
                 break (None, true);
             }
@@ -240,11 +301,16 @@ impl<'a> StmtCollector<'a> {
         &self,
         src_tree: &FuncSrcTree,
         exec_node_ptr: SharedFuncNodePtr,
-    ) -> Result<(Vec<ProcessUnit>, Option<SrcVar>, bool)> {
+    ) -> Result<(
+        Vec<ProcessUnit>,
+        Option<SrcVar>,
+        bool,
+        Vec<ThreadJoinHandle>,
+    )> {
         let func_node = exec_node_ptr.read().unwrap();
         let (is_recur_lock, enter_rb) = Self::check_recur_lock(&func_node)?;
         if is_recur_lock {
-            return Ok((vec![], None, enter_rb));
+            return Ok((vec![], None, enter_rb, vec![]));
         }
 
         let mut act_iter = func_node.iter();
@@ -253,6 +319,7 @@ impl<'a> StmtCollector<'a> {
 
         let mut src_iter = src_tree.iter();
         let mut stmt_ptr_op;
+        let mut func_hdlvec = vec![];
         loop {
             // iteration logic
             stmt_ptr_op = src_iter.next();
@@ -296,7 +363,7 @@ impl<'a> StmtCollector<'a> {
                         // rollback inner
                         let is_inner = Self::rollback_detect(&mut act_iter)?;
                         if is_inner {
-                            return Ok((pu_vec, None, true));
+                            return Ok((pu_vec, None, true, func_hdlvec));
                         } else {
                             Self::rollback_exit_handle(src_tree, &mut act_iter, &mut src_iter)?;
                         }
@@ -309,22 +376,27 @@ impl<'a> StmtCollector<'a> {
 
                     // handle return stmt
 
-                    let (retexpr_op, is_rb) = self.plain_stmt_handle(
+                    let (retexpr_op, is_rb, hdl_vec) = self.plain_stmt_handle(
                         plain_stmt,
                         stmt_ptr.clone(),
                         &mut act_iter,
                         &mut pu_vec,
                     )?;
+                    func_hdlvec.extend(hdl_vec);
+
                     if is_rb {
                         let is_inner = Self::rollback_detect(&mut act_iter)?;
                         if is_inner {
-                            return Ok((pu_vec, None, true));
+                            return Ok((pu_vec, None, true, func_hdlvec));
                         } else {
                             // rollback exit handle
                             Self::rollback_exit_handle(src_tree, &mut act_iter, &mut src_iter)?;
                         }
                     } else {
                         if let Some(ret_expr) = retexpr_op {
+                            let ret_expr = ret_expr
+                                .get_exprpu_ref()
+                                .ok_or_else(|| eyre::eyre!("Return Expr should be expr pu"))?;
                             let ret_var_op = Self::create_ret_var(src_tree, plain_stmt.loc.clone());
                             match ret_var_op {
                                 None => {}
@@ -337,14 +409,14 @@ impl<'a> StmtCollector<'a> {
                                     pu_vec.push(ret_assign_pu);
                                 }
                             }
-                            return Ok((pu_vec, ret_var_op, false));
+                            return Ok((pu_vec, ret_var_op, false, func_hdlvec));
                         }
                     }
                 }
             }
         }
 
-        Ok((pu_vec, None, false))
+        Ok((pu_vec, None, false, func_hdlvec))
     }
 
     fn get_src_func_tree(&self, func_name: &str) -> Result<&FuncSrcTree> {
@@ -357,25 +429,12 @@ impl<'a> StmtCollector<'a> {
         })
     }
 
-    fn collect_recur(&self, func_node_ptr: SharedFuncNodePtr) -> Result<Vec<ProcessUnit>> {
+    fn collect_recur(&mut self, func_node_ptr: SharedFuncNodePtr) -> Result<Vec<ProcessUnit>> {
         let func_node = func_node_ptr.read().unwrap();
+        // handle init node
         if func_node.is_init() {
-            assert!(
-                func_node.data.len() == 1,
-                "Init node should have only one action"
-            );
-            let exec_act = &func_node.data[0];
-            match exec_act {
-                ExecAction::Func(func_act) => {
-                    let child_ptr = func_act
-                        .get_child_ptr()
-                        .ok_or_else(|| eyre::eyre!("Init Func action should have a child node"))?;
-                    return self.collect_recur(child_ptr);
-                }
-                _ => {
-                    bail!("Init node should have only one Func action");
-                }
-            }
+            let child_ptr = func_node.get_entryfunc_ptr()?;
+            return self.collect_recur(child_ptr);
         }
 
         let func_name = func_node.get_func_name().ok_or_else(|| {
@@ -385,7 +444,8 @@ impl<'a> StmtCollector<'a> {
         let src_tree = self.get_src_func_tree(func_name)?;
         drop(func_node);
 
-        let (pu_vec, _, is_rb) = self.collect_intra(src_tree, func_node_ptr)?;
+        let (pu_vec, _, is_rb, hdl_vec) = self.collect_intra(src_tree, func_node_ptr)?;
+        self.subhdl_vec.extend(hdl_vec);
         assert!(
             !is_rb,
             "Top Level Function should not enter rollback status after intra collection"
@@ -393,8 +453,10 @@ impl<'a> StmtCollector<'a> {
         Ok(pu_vec)
     }
 
-    pub fn collect(&self) -> Result<Vec<ProcessUnit>> {
-        let root_ptr = self.exec_forest.get_main_root_ptr();
-        self.collect_recur(root_ptr)
+    pub fn path_collect(&mut self, prepath_pu: Vec<ProcessUnit>) -> Result<Vec<ProcessUnit>> {
+        let mut pu_vec = prepath_pu;
+        let intra_pu_vec = self.collect_recur(self.exec_root_ptr.clone())?;
+        pu_vec.extend(intra_pu_vec);
+        Ok(pu_vec)
     }
 }

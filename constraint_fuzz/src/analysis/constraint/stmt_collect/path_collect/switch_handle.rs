@@ -8,14 +8,14 @@ use crate::analysis::constraint::{
         stmts::QLLoc,
     },
     stmt_collect::{
-        path_collect::inner_stmt::InnerStmtHandler, path_collect::StmtCollector, ProcessUnit,
+        path_collect::inner_stmt::InnerStmtHandler, path_collect::RuntimePathCollector, ProcessUnit,
     },
 };
 
 use color_eyre::eyre::Result;
 use eyre::bail;
 
-impl<'a> StmtCollector<'a> {
+impl RuntimePathCollector {
     fn switch_expr_handle(
         &self,
         switch_node: &SwitchNode,
@@ -37,7 +37,11 @@ impl<'a> StmtCollector<'a> {
             if !switch_expr.act_inner(act)? {
                 break;
             }
-            let is_rb = handler.act_handle(act)?;
+            let (is_rb, inner_hdlvec) = handler.act_handle(act)?;
+            assert!(
+                inner_hdlvec.is_empty(),
+                "Thread Action should not appear at switch expr handle"
+            );
             if is_rb {
                 uw_detect = true;
                 break;

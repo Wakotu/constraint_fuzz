@@ -1,4 +1,5 @@
 use crate::analysis::constraint::{
+    inter::exec_tree::thread_tree::Tid,
     intra::func_src_tree::{code_query::scope_var_query::SrcVar, nodes::SharedStmtNodePtr},
     stmt_collect::path_collect::inner_stmt::ArgExpr,
 };
@@ -9,7 +10,7 @@ pub mod runtime_path;
 
 pub type StmtStr = String;
 
-pub enum ProcessUnitVariant {
+pub enum ExprPuVariant {
     Plain {},
     CondExpr { val: bool },
 }
@@ -56,20 +57,90 @@ impl Ord for InnerCondRec {
     }
 }
 
-pub struct ProcessUnit {
-    pub content: String,
-    pub valid_var_vec: Vec<SrcVar>,
-    pub cond_rec_vec: Vec<InnerCondRec>,
-    pub variants: ProcessUnitVariant,
+pub enum ProcessUnit {
+    Thread(ThreadPu),
+    Expr(ExprPu),
 }
 
 impl std::fmt::Display for ProcessUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessUnit::Thread(thread_pu) => write!(f, "ThreadPu: TID {}", thread_pu.thread_id),
+            ProcessUnit::Expr(expr_pu) => write!(f, "ExprPu: {}", expr_pu),
+        }
+    }
+}
+
+impl ProcessUnit {
+    pub fn new_thread_pu(thread_id: Tid) -> Self {
+        ProcessUnit::Thread(ThreadPu { thread_id })
+    }
+
+    pub fn get_exprpu_ref(&self) -> Option<&ExprPu> {
+        match self {
+            ProcessUnit::Expr(expr_pu) => Some(expr_pu),
+            _ => None,
+        }
+    }
+
+    pub fn get_exprpu(self) -> Option<ExprPu> {
+        match self {
+            ProcessUnit::Expr(expr_pu) => Some(expr_pu),
+            _ => None,
+        }
+    }
+
+    pub fn from_exprpu(expr_pu: ExprPu) -> Self {
+        ProcessUnit::Expr(expr_pu)
+    }
+
+    pub fn create_plain_pu(content: String, valid_var_vec: Vec<SrcVar>) -> Self {
+        let expr_pu = ExprPu::create_plain_pu(content, valid_var_vec);
+        ProcessUnit::Expr(expr_pu)
+    }
+
+    pub fn create_pre_func_assign_pu(arg_expr: &ArgExpr, param_var: &SrcVar) -> Self {
+        let expr_pu = ExprPu::create_pre_func_assign_pu(arg_expr, param_var);
+        ProcessUnit::Expr(expr_pu)
+    }
+
+    pub fn create_plain_pu_with_cond_recs(
+        content: String,
+        valid_var_vec: Vec<SrcVar>,
+        cond_recs: &Vec<InnerCondRec>,
+    ) -> Self {
+        let expr_pu = ExprPu::create_plain_pu_with_cond_recs(content, valid_var_vec, cond_recs);
+        ProcessUnit::Expr(expr_pu)
+    }
+
+    pub fn create_ret_assign_pu(
+        ret_expr: &ExprPu,
+        ret_var: &SrcVar,
+        ret_stmt_ptr: SharedStmtNodePtr,
+    ) -> Self {
+        let expr_pu = ExprPu::create_ret_assign_pu(ret_expr, ret_var, ret_stmt_ptr);
+        ProcessUnit::Expr(expr_pu)
+    }
+}
+
+pub struct ThreadPu {
+    pub thread_id: Tid,
+}
+
+pub struct ExprPu {
+    pub content: String,
+    pub valid_var_vec: Vec<SrcVar>,
+    pub cond_rec_vec: Vec<InnerCondRec>,
+    pub variants: ExprPuVariant,
+}
+
+impl std::fmt::Display for ExprPu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.content)
     }
 }
 
-impl ProcessUnit {
+impl ExprPu {
     /**
      * Construction Related
      */
@@ -82,7 +153,7 @@ impl ProcessUnit {
             content,
             valid_var_vec,
             cond_rec_vec: vec![],
-            variants: ProcessUnitVariant::Plain {},
+            variants: ExprPuVariant::Plain {},
         }
     }
 
@@ -100,7 +171,7 @@ impl ProcessUnit {
             content: assign_str,
             valid_var_vec: var_vec,
             cond_rec_vec: cond_vec,
-            variants: ProcessUnitVariant::Plain {},
+            variants: ExprPuVariant::Plain {},
         }
     }
 
@@ -113,12 +184,12 @@ impl ProcessUnit {
             content,
             valid_var_vec,
             cond_rec_vec: cond_recs.to_vec(),
-            variants: ProcessUnitVariant::Plain {},
+            variants: ExprPuVariant::Plain {},
         }
     }
 
     pub fn create_ret_assign_pu(
-        ret_expr: &ProcessUnit,
+        ret_expr: &ExprPu,
         ret_var: &SrcVar,
         ret_stmt_ptr: SharedStmtNodePtr,
     ) -> Self {
@@ -129,15 +200,15 @@ impl ProcessUnit {
             content,
             valid_var_vec,
             cond_rec_vec: vec![],
-            variants: ProcessUnitVariant::Plain {},
+            variants: ExprPuVariant::Plain {},
         }
     }
 
-    pub fn concat_cond_pu(expr_pu: ProcessUnit, val_lit: String) -> Self {
+    pub fn concat_cond_pu(expr_pu: ExprPu, val_lit: String) -> Self {
         let mut pu = expr_pu;
         let cond_str = format!(" == {}", val_lit);
         pu.content.push_str(&cond_str);
-        pu.variants = ProcessUnitVariant::CondExpr { val: true };
+        pu.variants = ExprPuVariant::CondExpr { val: true };
         pu
     }
 }
